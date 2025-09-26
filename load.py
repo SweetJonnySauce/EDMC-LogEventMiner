@@ -80,16 +80,19 @@ _ensure_file_logging()
 
 
 _CONFIG_IGNORE_EVENTS = "testeventlogger_ignore_events"
+_CONFIG_INCLUDE_PAYLOAD = "testeventlogger_include_payload"
 _DEFAULT_IGNORE_EVENTS = ("Music", "Fileheader")
 
 
 @dataclass
 class _PrefsState:
     ignore_widget: tk.Text | None = None
+    include_payload_var: tk.BooleanVar | None = None
 
 
 _prefs_state = _PrefsState()
 _ignored_events: Set[str] = set()
+_include_payload = True
 
 
 def _normalise_event_names(raw_events: Iterable[str]) -> Set[str]:
@@ -117,6 +120,15 @@ def _serialise_ignore_events(events: Iterable[str]) -> str:
     return "\n".join(sorted(_normalise_event_names(events)))
 
 
+def _load_settings() -> None:
+    global _include_payload
+    _load_ignore_events()
+    include = config.get_bool(_CONFIG_INCLUDE_PAYLOAD)
+    if include is None:
+        include = True
+    _include_payload = bool(include)
+
+
 plugin_info = {
     "plugin_version": "1.0.0",
     "plugin_name": _PLUGIN_NAME,
@@ -125,11 +137,15 @@ plugin_info = {
 
 
 def plugin_start3(plugin_dir: str) -> str:
-    _load_ignore_events()
+    _load_settings()
     _logger.info(
         "TestEventLogger initialised. Ignoring %d events: %s",
         len(_ignored_events),
         ", ".join(sorted(_ignored_events)) or "<none>",
+    )
+    _logger.info(
+        "Event payload logging %s",
+        "enabled" if _include_payload else "disabled",
     )
     return "TestEventLogger"
 
@@ -174,6 +190,13 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         font=("TkDefaultFont", 8),
     ).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
 
+    _prefs_state.include_payload_var = tk.BooleanVar(value=_include_payload)
+    nb.Checkbutton(
+        frame,
+        text="Include full event payload in log entries",
+        variable=_prefs_state.include_payload_var,
+    ).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 4))
+
     return frame
 
 
@@ -189,6 +212,16 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
     config.set(_CONFIG_IGNORE_EVENTS, _serialise_ignore_events(events))
     _logger.info("Updated ignore list: %s", ", ".join(sorted(_ignored_events)))
 
+    if _prefs_state.include_payload_var is not None:
+        include_payload = bool(_prefs_state.include_payload_var.get())
+        global _include_payload
+        _include_payload = include_payload
+        config.set(_CONFIG_INCLUDE_PAYLOAD, include_payload)
+        _logger.info(
+            "Event payload logging %s",
+            "enabled" if include_payload else "disabled",
+        )
+
 
 def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
     event_name = entry.get("event")
@@ -197,12 +230,15 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
         return
     if event_name in _ignored_events:
         return
-    try:
-        payload = json.dumps(entry, separators=(",", ":"), ensure_ascii=False)
-    except TypeError:
-        payload = repr(entry)
-        _logger.warning(
-            "Could not serialise journal event %s to JSON, using repr instead.",
-            event_name,
-        )
-    _logger.info("Journal event %s: %s", event_name, payload)
+    if _include_payload:
+        try:
+            payload = json.dumps(entry, separators=(",", ":"), ensure_ascii=False)
+        except TypeError:
+            payload = repr(entry)
+            _logger.warning(
+                "Could not serialise journal event %s to JSON, using repr instead.",
+                event_name,
+            )
+        _logger.info("Journal event %s: %s", event_name, payload)
+    else:
+        _logger.info("Journal event %s", event_name)
