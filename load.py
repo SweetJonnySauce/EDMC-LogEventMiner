@@ -80,19 +80,27 @@ _ensure_file_logging()
 
 
 _CONFIG_IGNORE_EVENTS = "testeventlogger_ignore_events"
+_CONFIG_INCLUDE_EVENTS = "testeventlogger_include_events"
+_CONFIG_MODE = "testeventlogger_filter_mode"
 _CONFIG_INCLUDE_PAYLOAD = "testeventlogger_include_payload"
+
 _DEFAULT_IGNORE_EVENTS = ("Music", "Fileheader")
+_DEFAULT_INCLUDE_EVENTS: tuple[str, ...] = ()
 
 
 @dataclass
 class _PrefsState:
     ignore_widget: tk.Text | None = None
+    include_widget: tk.Text | None = None
     include_payload_var: tk.BooleanVar | None = None
+    mode_var: tk.StringVar | None = None
 
 
 _prefs_state = _PrefsState()
 _ignored_events: Set[str] = set()
+_included_events: Set[str] = set()
 _include_payload = True
+_filter_mode = "exclude"  # either "exclude" or "include"
 
 
 def _normalise_event_names(raw_events: Iterable[str]) -> Set[str]:
@@ -116,33 +124,60 @@ def _load_ignore_events() -> None:
     _ignored_events.update(events)
 
 
-def _serialise_ignore_events(events: Iterable[str]) -> str:
+def _load_include_events() -> None:
+    saved = config.get_str(_CONFIG_INCLUDE_EVENTS)
+    if saved:
+        events = _parse_ignore_list(saved)
+    else:
+        events = set(_DEFAULT_INCLUDE_EVENTS)
+    _included_events.clear()
+    _included_events.update(events)
+
+
+def _serialise_events(events: Iterable[str]) -> str:
     return "\n".join(sorted(_normalise_event_names(events)))
 
 
 def _load_settings() -> None:
-    global _include_payload
+    global _include_payload, _filter_mode
     _load_ignore_events()
+    _load_include_events()
     include = config.get_bool(_CONFIG_INCLUDE_PAYLOAD)
     if include is None:
         include = True
     _include_payload = bool(include)
+    mode = config.get_str(_CONFIG_MODE)
+    if mode not in {"include", "exclude"}:
+        mode = "exclude"
+    _filter_mode = mode
 
 
 plugin_info = {
     "plugin_version": "1.0.0",
     "plugin_name": _PLUGIN_NAME,
-    "plugin_description": "Logs journal events to the EDMC log with optional event ignore list.",
+    "plugin_description": "Logs journal events to a dedicated log with configurable include/exclude filters.",
 }
 
 
 def plugin_start3(plugin_dir: str) -> str:
     _load_settings()
-    _logger.info(
-        "TestEventLogger initialised. Ignoring %d events: %s",
-        len(_ignored_events),
-        ", ".join(sorted(_ignored_events)) or "<none>",
-    )
+    if _filter_mode == "include":
+        if _included_events:
+            _logger.info(
+                "TestEventLogger initialised. Include-only mode with %d events: %s",
+                len(_included_events),
+                ", ".join(sorted(_included_events)),
+            )
+        else:
+            _logger.info(
+                "TestEventLogger initialised. Include-only mode active but no events configured; nothing will be logged.",
+            )
+    else:
+        _logger.info(
+            "TestEventLogger initialised. Ignoring %d events: %s",
+            len(_ignored_events),
+            ", ".join(sorted(_ignored_events)) or "<none>",
+        )
     _logger.info(
         "Event payload logging %s",
         "enabled" if _include_payload else "disabled",
@@ -162,59 +197,121 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     frame = nb.Frame(parent)
     frame.columnconfigure(1, weight=1)
 
+    current_row = 0
+
     nb.Label(frame, text="Test Event Logger", font=("TkDefaultFont", 10, "bold")).grid(
-        row=0, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 4)
+        row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 4)
     )
+    current_row += 1
+
     nb.Label(
         frame,
         text=(
-            "Logs incoming Elite Dangerous journal events to the EDMC log. "
-            "Provide events to ignore (one per line)."
+            "Mirror Elite Dangerous journal events to a dedicated log file. "
+            "Choose whether to include specific events or exclude unwanted noise."
         ),
-        wraplength=400,
+        wraplength=420,
         justify=tk.LEFT,
-    ).grid(row=1, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
+    current_row += 1
 
-    nb.Label(frame, text="Ignored events:").grid(row=2, column=0, sticky=tk.NW, padx=10, pady=(0, 6))
+    nb.Label(frame, text="Logging mode:").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 4)
+    )
+    _prefs_state.mode_var = tk.StringVar(value=_filter_mode)
+    mode_frame = nb.Frame(frame)
+    mode_frame.grid(row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 4))
+    nb.Radiobutton(
+        mode_frame, text="Use exclude list", value="exclude", variable=_prefs_state.mode_var
+    ).grid(row=0, column=0, sticky=tk.W)
+    nb.Radiobutton(
+        mode_frame, text="Use include-only list", value="include", variable=_prefs_state.mode_var
+    ).grid(row=0, column=1, sticky=tk.W, padx=(10, 0))
+    current_row += 1
 
-    ignore_box = tk.Text(frame, width=40, height=8)
-    ignore_box.insert("1.0", "\n".join(sorted(_ignored_events)))
-    ignore_box.grid(row=2, column=1, sticky=tk.EW, padx=10, pady=(0, 6))
-    _prefs_state.ignore_widget = ignore_box
+    nb.Label(frame, text="Include-only events:").grid(
+        row=current_row, column=0, sticky=tk.NW, padx=10, pady=(6, 6)
+    )
+    include_box = tk.Text(frame, width=40, height=6)
+    include_box.insert("1.0", "\n".join(sorted(_included_events)))
+    include_box.grid(row=current_row, column=1, sticky=tk.EW, padx=10, pady=(6, 6))
+    _prefs_state.include_widget = include_box
+    current_row += 1
 
     nb.Label(
         frame,
-        text="Events listed here will not be written to the log.",
-        wraplength=400,
+        text="When include-only mode is selected, only these events will be logged.",
+        wraplength=420,
         justify=tk.LEFT,
         font=("TkDefaultFont", 8),
-    ).grid(row=3, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
+    current_row += 1
+
+    nb.Label(frame, text="Excluded events:").grid(
+        row=current_row, column=0, sticky=tk.NW, padx=10, pady=(6, 6)
+    )
+    ignore_box = tk.Text(frame, width=40, height=6)
+    ignore_box.insert("1.0", "\n".join(sorted(_ignored_events)))
+    ignore_box.grid(row=current_row, column=1, sticky=tk.EW, padx=10, pady=(6, 6))
+    _prefs_state.ignore_widget = ignore_box
+    current_row += 1
+
+    nb.Label(
+        frame,
+        text="When exclude mode is selected, these events will be skipped.",
+        wraplength=420,
+        justify=tk.LEFT,
+        font=("TkDefaultFont", 8),
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
+    current_row += 1
 
     _prefs_state.include_payload_var = tk.BooleanVar(value=_include_payload)
     nb.Checkbutton(
         frame,
         text="Include full event payload in log entries",
         variable=_prefs_state.include_payload_var,
-    ).grid(row=4, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 4))
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
 
     return frame
 
 
 def prefs_changed(cmdr: str, is_beta: bool) -> None:
-    if _prefs_state.ignore_widget is None:
-        return
-    raw = _prefs_state.ignore_widget.get("1.0", tk.END)
-    events = _parse_ignore_list(raw)
-    if not events:
-        events = set(_DEFAULT_IGNORE_EVENTS)
-    _ignored_events.clear()
-    _ignored_events.update(events)
-    config.set(_CONFIG_IGNORE_EVENTS, _serialise_ignore_events(events))
-    _logger.info("Updated ignore list: %s", ", ".join(sorted(_ignored_events)))
+    global _include_payload, _filter_mode
+
+    if _prefs_state.ignore_widget is not None:
+        raw_ignore = _prefs_state.ignore_widget.get("1.0", tk.END)
+        ignore_events = _parse_ignore_list(raw_ignore)
+        if not ignore_events:
+            ignore_events = set(_DEFAULT_IGNORE_EVENTS)
+        _ignored_events.clear()
+        _ignored_events.update(ignore_events)
+        config.set(_CONFIG_IGNORE_EVENTS, _serialise_events(ignore_events))
+        _logger.info("Updated ignore list: %s", ", ".join(sorted(_ignored_events)))
+
+    if _prefs_state.include_widget is not None:
+        raw_include = _prefs_state.include_widget.get("1.0", tk.END)
+        include_events = _parse_ignore_list(raw_include)
+        _included_events.clear()
+        _included_events.update(include_events)
+        config.set(_CONFIG_INCLUDE_EVENTS, _serialise_events(include_events))
+        if include_events:
+            _logger.info(
+                "Updated include list: %s",
+                ", ".join(sorted(_included_events)),
+            )
+        else:
+            _logger.info("Updated include list: <none>")
+
+    if _prefs_state.mode_var is not None:
+        mode_value = _prefs_state.mode_var.get() or "exclude"
+        if mode_value not in {"include", "exclude"}:
+            mode_value = "exclude"
+        _filter_mode = mode_value
+        config.set(_CONFIG_MODE, mode_value)
+        _logger.info("Filter mode set to %s", mode_value)
 
     if _prefs_state.include_payload_var is not None:
         include_payload = bool(_prefs_state.include_payload_var.get())
-        global _include_payload
         _include_payload = include_payload
         config.set(_CONFIG_INCLUDE_PAYLOAD, include_payload)
         _logger.info(
@@ -228,8 +325,19 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
     if not event_name:
         _logger.debug("Received journal entry without event field: %s", entry)
         return
-    if event_name in _ignored_events:
-        return
+    if _filter_mode == "include":
+        if _included_events:
+            if event_name not in _included_events:
+                return
+        else:
+            _logger.debug(
+                "Include-only mode active but no events configured; skipping %s",
+                event_name,
+            )
+            return
+    else:
+        if event_name in _ignored_events:
+            return
     if _include_payload:
         try:
             payload = json.dumps(entry, separators=(",", ":"), ensure_ascii=False)
