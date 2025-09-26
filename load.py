@@ -83,6 +83,8 @@ _CONFIG_IGNORE_EVENTS = "testeventlogger_ignore_events"
 _CONFIG_INCLUDE_EVENTS = "testeventlogger_include_events"
 _CONFIG_MODE = "testeventlogger_filter_mode"
 _CONFIG_INCLUDE_PAYLOAD = "testeventlogger_include_payload"
+_CONFIG_PAYLOAD_LIMIT = "testeventlogger_payload_limit"
+_CONFIG_LOGGING_ENABLED = "testeventlogger_logging_enabled"
 
 _DEFAULT_IGNORE_EVENTS = ("Music", "Fileheader")
 _DEFAULT_INCLUDE_EVENTS: tuple[str, ...] = ()
@@ -94,6 +96,8 @@ class _PrefsState:
     include_widget: tk.Text | None = None
     include_payload_var: tk.BooleanVar | None = None
     mode_var: tk.StringVar | None = None
+    payload_limit_var: tk.StringVar | None = None
+    logging_enabled_var: tk.BooleanVar | None = None
 
 
 _prefs_state = _PrefsState()
@@ -101,6 +105,8 @@ _ignored_events: Set[str] = set()
 _included_events: Set[str] = set()
 _include_payload = True
 _filter_mode = "exclude"  # either "exclude" or "include"
+_payload_limit: int | None = None
+_logging_enabled = True
 
 
 def _normalise_event_names(raw_events: Iterable[str]) -> Set[str]:
@@ -139,7 +145,7 @@ def _serialise_events(events: Iterable[str]) -> str:
 
 
 def _load_settings() -> None:
-    global _include_payload, _filter_mode
+    global _include_payload, _filter_mode, _payload_limit, _logging_enabled
     _load_ignore_events()
     _load_include_events()
     include = config.get_bool(_CONFIG_INCLUDE_PAYLOAD)
@@ -150,6 +156,19 @@ def _load_settings() -> None:
     if mode not in {"include", "exclude"}:
         mode = "exclude"
     _filter_mode = mode
+    limit_value = config.get_str(_CONFIG_PAYLOAD_LIMIT)
+    if limit_value:
+        try:
+            parsed = int(limit_value)
+        except ValueError:
+            parsed = 0
+        _payload_limit = parsed if parsed > 0 else None
+    else:
+        _payload_limit = None
+    logging_value = config.get_bool(_CONFIG_LOGGING_ENABLED)
+    if logging_value is None:
+        logging_value = True
+    _logging_enabled = bool(logging_value)
 
 
 plugin_info = {
@@ -182,6 +201,11 @@ def plugin_start3(plugin_dir: str) -> str:
         "Event payload logging %s",
         "enabled" if _include_payload else "disabled",
     )
+    if _payload_limit is not None:
+        _logger.info("Payload limit: %d characters", _payload_limit)
+    else:
+        _logger.info("Payload limit: unlimited")
+    _logger.info("Logging is %s", "enabled" if _logging_enabled else "disabled")
     return "TestEventLogger"
 
 
@@ -213,6 +237,14 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         wraplength=420,
         justify=tk.LEFT,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
+    current_row += 1
+
+    _prefs_state.logging_enabled_var = tk.BooleanVar(value=_logging_enabled)
+    nb.Checkbutton(
+        frame,
+        text="Enable journal logging",
+        variable=_prefs_state.logging_enabled_var,
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
     current_row += 1
 
     nb.Label(frame, text="Logging mode:").grid(
@@ -265,6 +297,17 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
     current_row += 1
 
+    payload_limit_value = "" if _payload_limit is None else str(_payload_limit)
+    nb.Label(
+        frame,
+        text="Payload character limit (leave blank for unlimited):",
+    ).grid(row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 6))
+    _prefs_state.payload_limit_var = tk.StringVar(value=payload_limit_value)
+    nb.Entry(frame, textvariable=_prefs_state.payload_limit_var, width=10).grid(
+        row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 6)
+    )
+    current_row += 1
+
     _prefs_state.include_payload_var = tk.BooleanVar(value=_include_payload)
     nb.Checkbutton(
         frame,
@@ -276,7 +319,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
 
 
 def prefs_changed(cmdr: str, is_beta: bool) -> None:
-    global _include_payload, _filter_mode
+    global _include_payload, _filter_mode, _payload_limit, _logging_enabled
 
     if _prefs_state.ignore_widget is not None:
         raw_ignore = _prefs_state.ignore_widget.get("1.0", tk.END)
@@ -310,6 +353,29 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         config.set(_CONFIG_MODE, mode_value)
         _logger.info("Filter mode set to %s", mode_value)
 
+    if _prefs_state.payload_limit_var is not None:
+        raw_limit = (_prefs_state.payload_limit_var.get() or "").strip()
+        new_limit = None
+        if raw_limit:
+            try:
+                parsed = int(raw_limit)
+            except ValueError:
+                parsed = 0
+            if parsed > 0:
+                new_limit = parsed
+        _payload_limit = new_limit
+        if new_limit is not None:
+            config.set(_CONFIG_PAYLOAD_LIMIT, str(new_limit))
+            _prefs_state.payload_limit_var.set(str(new_limit))
+            _logger.info("Payload limit set to %d characters", new_limit)
+        else:
+            config.set(_CONFIG_PAYLOAD_LIMIT, "")
+            _prefs_state.payload_limit_var.set("")
+            if raw_limit and not raw_limit.isdigit():
+                _logger.warning("Invalid payload limit '%s'; disabled truncation.", raw_limit)
+            else:
+                _logger.info("Payload limit disabled")
+
     if _prefs_state.include_payload_var is not None:
         include_payload = bool(_prefs_state.include_payload_var.get())
         _include_payload = include_payload
@@ -319,8 +385,16 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
             "enabled" if include_payload else "disabled",
         )
 
+    if _prefs_state.logging_enabled_var is not None:
+        logging_enabled = bool(_prefs_state.logging_enabled_var.get())
+        _logging_enabled = logging_enabled
+        config.set(_CONFIG_LOGGING_ENABLED, logging_enabled)
+        _logger.info("Logging %s", "enabled" if logging_enabled else "disabled")
+
 
 def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
+    if not _logging_enabled:
+        return
     event_name = entry.get("event")
     if not event_name:
         _logger.debug("Received journal entry without event field: %s", entry)
@@ -347,6 +421,15 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
                 "Could not serialise journal event %s to JSON, using repr instead.",
                 event_name,
             )
+        truncated = False
+        if _payload_limit is not None and len(payload) > _payload_limit:
+            truncated = True
+            if _payload_limit > 3:
+                payload = payload[: _payload_limit - 3] + "..."
+            else:
+                payload = payload[: _payload_limit]
         _logger.info("Journal event %s: %s", event_name, payload)
+        if truncated:
+            _logger.debug("Payload truncated to %d characters for %s", _payload_limit, event_name)
     else:
         _logger.info("Journal event %s", event_name)
