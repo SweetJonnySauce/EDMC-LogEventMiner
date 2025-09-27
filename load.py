@@ -6,7 +6,7 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Iterable, Set
+from typing import Any, Dict, Iterable, Set
 
 import tkinter as tk
 
@@ -85,6 +85,8 @@ _CONFIG_MODE = "testeventlogger_filter_mode"
 _CONFIG_INCLUDE_PAYLOAD = "testeventlogger_include_payload"
 _CONFIG_PAYLOAD_LIMIT = "testeventlogger_payload_limit"
 _CONFIG_LOGGING_ENABLED = "testeventlogger_logging_enabled"
+_CONFIG_PROFILES = "testeventlogger_profiles"
+_CONFIG_ACTIVE_PROFILE = "testeventlogger_active_profile"
 
 _DEFAULT_IGNORE_EVENTS = ("Music", "Fileheader")
 _DEFAULT_INCLUDE_EVENTS: tuple[str, ...] = ()
@@ -98,6 +100,9 @@ class _PrefsState:
     mode_var: tk.StringVar | None = None
     payload_limit_var: tk.StringVar | None = None
     logging_enabled_var: tk.BooleanVar | None = None
+    profile_var: tk.StringVar | None = None
+    new_profile_var: tk.StringVar | None = None
+    profile_menu: tk.OptionMenu | None = None
 
 
 _prefs_state = _PrefsState()
@@ -107,6 +112,8 @@ _include_payload = True
 _filter_mode = "exclude"  # either "exclude" or "include"
 _payload_limit: int | None = None
 _logging_enabled = True
+_profiles: Dict[str, Dict[str, Any]] = {}
+_active_profile = "Default"
 
 
 def _normalise_event_names(raw_events: Iterable[str]) -> Set[str]:
@@ -120,55 +127,294 @@ def _parse_ignore_list(raw: str) -> Set[str]:
     return _normalise_event_names(raw.splitlines())
 
 
-def _load_ignore_events() -> None:
-    saved = config.get_str(_CONFIG_IGNORE_EVENTS)
-    if saved:
-        events = _parse_ignore_list(saved)
-    else:
-        events = set(_DEFAULT_IGNORE_EVENTS)
-    _ignored_events.clear()
-    _ignored_events.update(events)
-
-
-def _load_include_events() -> None:
-    saved = config.get_str(_CONFIG_INCLUDE_EVENTS)
-    if saved:
-        events = _parse_ignore_list(saved)
-    else:
-        events = set(_DEFAULT_INCLUDE_EVENTS)
-    _included_events.clear()
-    _included_events.update(events)
-
-
 def _serialise_events(events: Iterable[str]) -> str:
     return "\n".join(sorted(_normalise_event_names(events)))
 
 
-def _load_settings() -> None:
-    global _include_payload, _filter_mode, _payload_limit, _logging_enabled
-    _load_ignore_events()
-    _load_include_events()
-    include = config.get_bool(_CONFIG_INCLUDE_PAYLOAD)
-    if include is None:
-        include = True
-    _include_payload = bool(include)
+def _default_settings() -> Dict[str, Any]:
+    return {
+        "ignored_events": list(_DEFAULT_IGNORE_EVENTS),
+        "included_events": list(_DEFAULT_INCLUDE_EVENTS),
+        "filter_mode": "exclude",
+        "include_payload": True,
+        "payload_limit": None,
+        "logging_enabled": True,
+    }
+
+
+def _coerce_event_collection(value: Any) -> Set[str]:
+    if isinstance(value, str):
+        return _parse_ignore_list(value)
+    if isinstance(value, Iterable):
+        return _normalise_event_names(str(item) for item in value)
+    return set()
+
+
+def _sanitize_settings(settings: Any) -> Dict[str, Any]:
+    base = _default_settings()
+    if not isinstance(settings, dict):
+        return base
+
+    ignored = _coerce_event_collection(settings.get("ignored_events", base["ignored_events"]))
+    if not ignored:
+        ignored = set(_DEFAULT_IGNORE_EVENTS)
+
+    included = _coerce_event_collection(settings.get("included_events", base["included_events"]))
+
+    mode = settings.get("filter_mode", base["filter_mode"])
+    if mode not in {"include", "exclude"}:
+        mode = "exclude"
+
+    include_payload = settings.get("include_payload", base["include_payload"])
+    include_payload = bool(include_payload)
+
+    payload_limit = settings.get("payload_limit", base["payload_limit"])
+    if isinstance(payload_limit, str):
+        try:
+            payload_limit = int(payload_limit)
+        except ValueError:
+            payload_limit = None
+    if isinstance(payload_limit, (int, float)):
+        payload_limit = int(payload_limit)
+        if payload_limit <= 0:
+            payload_limit = None
+    else:
+        payload_limit = None
+
+    logging_enabled = settings.get("logging_enabled", base["logging_enabled"])
+    logging_enabled = bool(logging_enabled)
+
+    return {
+        "ignored_events": sorted(ignored),
+        "included_events": sorted(included),
+        "filter_mode": mode,
+        "include_payload": include_payload,
+        "payload_limit": payload_limit,
+        "logging_enabled": logging_enabled,
+    }
+
+
+def _build_settings_from_config() -> Dict[str, Any]:
+    ignored = _parse_ignore_list(config.get_str(_CONFIG_IGNORE_EVENTS) or "")
+    if not ignored:
+        ignored = set(_DEFAULT_IGNORE_EVENTS)
+
+    include_only = _parse_ignore_list(config.get_str(_CONFIG_INCLUDE_EVENTS) or "")
+
     mode = config.get_str(_CONFIG_MODE)
     if mode not in {"include", "exclude"}:
         mode = "exclude"
-    _filter_mode = mode
+
+    include_payload = config.get_bool(_CONFIG_INCLUDE_PAYLOAD)
+    if include_payload is None:
+        include_payload = True
+
     limit_value = config.get_str(_CONFIG_PAYLOAD_LIMIT)
+    payload_limit: int | None = None
     if limit_value:
         try:
             parsed = int(limit_value)
         except ValueError:
             parsed = 0
-        _payload_limit = parsed if parsed > 0 else None
+        if parsed > 0:
+            payload_limit = parsed
+
+    logging_enabled = config.get_bool(_CONFIG_LOGGING_ENABLED)
+    if logging_enabled is None:
+        logging_enabled = True
+
+    return {
+        "ignored_events": sorted(ignored),
+        "included_events": sorted(include_only),
+        "filter_mode": mode,
+        "include_payload": bool(include_payload),
+        "payload_limit": payload_limit,
+        "logging_enabled": bool(logging_enabled),
+    }
+
+
+def _load_profiles_data() -> None:
+    global _profiles, _active_profile
+
+    raw_profiles = config.get_str(_CONFIG_PROFILES)
+    profiles: Dict[str, Dict[str, Any]] = {}
+
+    if raw_profiles:
+        try:
+            loaded = json.loads(raw_profiles)
+        except Exception as exc:  # pragma: no cover - defensive
+            _logger.warning("Unable to parse TestEventLogger profiles: %s", exc)
+            loaded = {}
+        if isinstance(loaded, dict):
+            for name, settings in loaded.items():
+                profile_name = str(name).strip()
+                if not profile_name:
+                    continue
+                profiles[profile_name] = _sanitize_settings(settings)
+
+    if not profiles:
+        profiles["Default"] = _build_settings_from_config()
+
+    _profiles = profiles
+
+    active = config.get_str(_CONFIG_ACTIVE_PROFILE) or "Default"
+    if active not in _profiles:
+        active = next(iter(_profiles.keys()))
+    _active_profile = active
+    config.set(_CONFIG_ACTIVE_PROFILE, _active_profile)
+
+
+def _get_current_settings() -> Dict[str, Any]:
+    return {
+        "ignored_events": sorted(_ignored_events),
+        "included_events": sorted(_included_events),
+        "filter_mode": _filter_mode,
+        "include_payload": _include_payload,
+        "payload_limit": _payload_limit,
+        "logging_enabled": _logging_enabled,
+    }
+
+
+def _apply_settings(settings: Dict[str, Any]) -> None:
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled
+
+    ignored = _coerce_event_collection(settings.get("ignored_events"))
+    if not ignored:
+        ignored = set(_DEFAULT_IGNORE_EVENTS)
+    _ignored_events.clear()
+    _ignored_events.update(ignored)
+
+    include_only = _coerce_event_collection(settings.get("included_events"))
+    _included_events.clear()
+    _included_events.update(include_only)
+
+    mode = settings.get("filter_mode", "exclude")
+    if mode not in {"include", "exclude"}:
+        mode = "exclude"
+    _filter_mode = mode
+
+    _include_payload = bool(settings.get("include_payload", True))
+
+    payload_limit = settings.get("payload_limit")
+    if isinstance(payload_limit, str):
+        try:
+            payload_limit = int(payload_limit)
+        except ValueError:
+            payload_limit = None
+    if isinstance(payload_limit, (int, float)):
+        payload_limit = int(payload_limit)
+        if payload_limit <= 0:
+            payload_limit = None
     else:
-        _payload_limit = None
-    logging_value = config.get_bool(_CONFIG_LOGGING_ENABLED)
-    if logging_value is None:
-        logging_value = True
-    _logging_enabled = bool(logging_value)
+        payload_limit = None
+    _payload_limit = payload_limit
+
+    _logging_enabled = bool(settings.get("logging_enabled", True))
+
+    config.set(_CONFIG_IGNORE_EVENTS, _serialise_events(_ignored_events))
+    config.set(_CONFIG_INCLUDE_EVENTS, _serialise_events(_included_events))
+    config.set(_CONFIG_MODE, _filter_mode)
+    config.set(_CONFIG_INCLUDE_PAYLOAD, _include_payload)
+    config.set(_CONFIG_PAYLOAD_LIMIT, "" if _payload_limit is None else str(_payload_limit))
+    config.set(_CONFIG_LOGGING_ENABLED, _logging_enabled)
+
+
+def _save_profiles() -> None:
+    serialisable = {name: _sanitize_settings(settings) for name, settings in _profiles.items()}
+    config.set(_CONFIG_PROFILES, json.dumps(serialisable))
+    config.set(_CONFIG_ACTIVE_PROFILE, _active_profile)
+
+
+def _refresh_profile_menu() -> None:
+    if _prefs_state.profile_menu is None or _prefs_state.profile_var is None:
+        return
+    menu = _prefs_state.profile_menu["menu"]
+    menu.delete(0, "end")
+    for name in sorted(_profiles.keys()):
+        menu.add_command(label=name, command=lambda value=name: _on_profile_selected(value))
+    _prefs_state.profile_var.set(_active_profile)
+
+
+def _populate_prefs_fields() -> None:
+    if _prefs_state.include_widget is not None:
+        _prefs_state.include_widget.delete("1.0", tk.END)
+        _prefs_state.include_widget.insert("1.0", "\n".join(sorted(_included_events)))
+    if _prefs_state.ignore_widget is not None:
+        _prefs_state.ignore_widget.delete("1.0", tk.END)
+        _prefs_state.ignore_widget.insert("1.0", "\n".join(sorted(_ignored_events)))
+    if _prefs_state.mode_var is not None:
+        _prefs_state.mode_var.set(_filter_mode)
+    if _prefs_state.include_payload_var is not None:
+        _prefs_state.include_payload_var.set(_include_payload)
+    if _prefs_state.payload_limit_var is not None:
+        _prefs_state.payload_limit_var.set("" if _payload_limit is None else str(_payload_limit))
+    if _prefs_state.logging_enabled_var is not None:
+        _prefs_state.logging_enabled_var.set(_logging_enabled)
+    if _prefs_state.profile_var is not None:
+        _prefs_state.profile_var.set(_active_profile)
+    if _prefs_state.new_profile_var is not None:
+        _prefs_state.new_profile_var.set("")
+
+
+def _set_active_profile(name: str, update_ui: bool = True) -> None:
+    global _active_profile
+    if name not in _profiles:
+        _logger.warning("Profile '%s' not found", name)
+        return
+    if name != _active_profile or update_ui is False:
+        _active_profile = name
+        _apply_settings(_profiles[name])
+        _save_profiles()
+    if _prefs_state.profile_var is not None:
+        _prefs_state.profile_var.set(_active_profile)
+    if update_ui:
+        _populate_prefs_fields()
+
+
+def _on_profile_selected(profile_name: str) -> None:
+    if profile_name == _active_profile:
+        return
+    _set_active_profile(profile_name)
+
+
+def _on_create_profile() -> None:
+    if _prefs_state.new_profile_var is None:
+        return
+    name = (_prefs_state.new_profile_var.get() or "").strip()
+    if not name:
+        _logger.warning("Profile name cannot be empty.")
+        return
+    _profiles[name] = _sanitize_settings(_get_current_settings())
+    _logger.info("Saved profile '%s'", name)
+    _set_active_profile(name)
+    _refresh_profile_menu()
+
+
+def _on_delete_profile() -> None:
+    if _prefs_state.profile_var is None:
+        return
+    name = _prefs_state.profile_var.get()
+    if name not in _profiles:
+        return
+    if len(_profiles) == 1:
+        _logger.warning("Cannot delete the last profile.")
+        return
+    del _profiles[name]
+    _logger.info("Deleted profile '%s'", name)
+    if name == _active_profile:
+        new_active = next(iter(sorted(_profiles.keys())))
+        _set_active_profile(new_active, update_ui=True)
+    else:
+        _save_profiles()
+    _refresh_profile_menu()
+    _populate_prefs_fields()
+
+
+def _load_settings() -> None:
+    _load_profiles_data()
+    settings = _profiles.get(_active_profile) or _default_settings()
+    _apply_settings(settings)
+    _save_profiles()
 
 
 plugin_info = {
@@ -206,6 +452,7 @@ def plugin_start3(plugin_dir: str) -> str:
     else:
         _logger.info("Payload limit: unlimited")
     _logger.info("Logging is %s", "enabled" if _logging_enabled else "disabled")
+    _logger.info("Active profile: %s", _active_profile)
     return "TestEventLogger"
 
 
@@ -245,6 +492,40 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         text="Enable journal logging",
         variable=_prefs_state.logging_enabled_var,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
+    current_row += 1
+
+    nb.Label(frame, text="Active profile:").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 4)
+    )
+    profile_frame = nb.Frame(frame)
+    profile_frame.grid(row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 4))
+    _prefs_state.profile_var = tk.StringVar(value=_active_profile)
+    profile_names = tuple(sorted(_profiles.keys())) or ("Default",)
+    option_menu = tk.OptionMenu(
+        profile_frame,
+        _prefs_state.profile_var,
+        *profile_names,
+        command=_on_profile_selected,
+    )
+    option_menu.grid(row=0, column=0, sticky=tk.W)
+    _prefs_state.profile_menu = option_menu
+    nb.Button(profile_frame, text="Delete", command=_on_delete_profile).grid(
+        row=0, column=1, sticky=tk.W, padx=(8, 0)
+    )
+    current_row += 1
+
+    nb.Label(frame, text="New profile name:").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 6)
+    )
+    new_profile_frame = nb.Frame(frame)
+    new_profile_frame.grid(row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 6))
+    _prefs_state.new_profile_var = tk.StringVar(value="")
+    nb.Entry(new_profile_frame, textvariable=_prefs_state.new_profile_var, width=20).grid(
+        row=0, column=0, sticky=tk.W
+    )
+    nb.Button(new_profile_frame, text="Save as profile", command=_on_create_profile).grid(
+        row=0, column=1, sticky=tk.W, padx=(8, 0)
+    )
     current_row += 1
 
     nb.Label(frame, text="Logging mode:").grid(
@@ -315,6 +596,8 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         variable=_prefs_state.include_payload_var,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
 
+    _refresh_profile_menu()
+    _populate_prefs_fields()
     return frame
 
 
@@ -390,6 +673,11 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         _logging_enabled = logging_enabled
         config.set(_CONFIG_LOGGING_ENABLED, logging_enabled)
         _logger.info("Logging %s", "enabled" if logging_enabled else "disabled")
+
+    _profiles[_active_profile] = _sanitize_settings(_get_current_settings())
+    _save_profiles()
+    _refresh_profile_menu()
+    _populate_prefs_fields()
 
 
 def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
