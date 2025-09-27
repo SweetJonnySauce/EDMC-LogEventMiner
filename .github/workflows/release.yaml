@@ -3,7 +3,7 @@ name: Package Release
 on:
   push:
     tags:
-      - 'v*'          # run whenever you push a tag like v1.2.3
+      - '*'          # run whenever you push a tag
 
 jobs:
   build-and-publish:
