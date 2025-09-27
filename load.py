@@ -1,4 +1,4 @@
-"""Test Event Logger - EDMC plugin with profile support."""
+"""EDMC-LogEventMiner - EDMC plugin with profile support."""
 
 from __future__ import annotations
 
@@ -329,6 +329,45 @@ def _current_log_path() -> str:
         return "Log file unavailable"
 
 
+def _apply_log_path_value(raw_path: Optional[str]) -> None:
+    """Update the active log file path, persisting it to config immediately."""
+
+    global _custom_log_path
+
+    trimmed = (raw_path or "").strip()
+    desired_default = _default_log_file().expanduser()
+
+    candidate: Optional[Path]
+    if trimmed:
+        try:
+            candidate = Path(trimmed).expanduser()
+        except Exception:
+            candidate = None
+    else:
+        candidate = None
+
+    if candidate is not None and candidate != desired_default:
+        _custom_log_path = candidate
+    else:
+        _custom_log_path = None
+
+    config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
+    _ensure_file_logging()
+
+
+def _apply_forward_to_edmc_value(raw_value: Optional[bool]) -> None:
+    """Toggle forwarding to the EDMC log immediately."""
+
+    global _forward_to_edmc_log
+
+    forward_native = bool(raw_value)
+    previous = _forward_to_edmc_log
+    _forward_to_edmc_log = forward_native
+    config.set(CONFIG_FORWARD_TO_EDMC_LOG, forward_native)
+    if forward_native != previous:
+        _sync_edmc_forwarding()
+
+
 def _get_current_settings() -> Dict[str, Any]:
     return {
         "ignored_events": sorted(_ignored_events),
@@ -442,23 +481,7 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         config.set(CONFIG_INCLUDE_EVENTS, _serialise_events(include_events))
 
     if prefs_state.log_path_var is not None:
-        raw_path = (prefs_state.log_path_var.get() or "").strip()
-        default_path = str(_default_log_file())
-        if raw_path:
-            try:
-                candidate = Path(raw_path).expanduser()
-            except Exception:
-                candidate = None
-            if candidate is not None and candidate != Path(default_path):
-                _custom_log_path = candidate
-            elif candidate is not None and candidate == Path(default_path):
-                _custom_log_path = None
-            else:
-                _custom_log_path = None
-        else:
-            _custom_log_path = None
-        config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
-        _ensure_file_logging()
+        _apply_log_path_value(prefs_state.log_path_var.get())
 
     if prefs_state.mode_var is not None:
         mode_value = prefs_state.mode_var.get() or "exclude"
@@ -491,9 +514,7 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         config.set(CONFIG_INCLUDE_PAYLOAD, include_payload)
 
     if prefs_state.forward_to_edmc_var is not None:
-        forward_native = bool(prefs_state.forward_to_edmc_var.get())
-        _forward_to_edmc_log = forward_native
-        config.set(CONFIG_FORWARD_TO_EDMC_LOG, forward_native)
+        _apply_forward_to_edmc_value(prefs_state.forward_to_edmc_var.get())
 
     if prefs_state.logging_enabled_var is not None:
         logging_enabled = bool(prefs_state.logging_enabled_var.get())
@@ -624,7 +645,8 @@ plugin_info = {
 def plugin_start3(plugin_dir: str) -> str:
     _load_profiles()
     logger.info(
-        "Initialised TestEventLogger with profile '%s' (ignored %d events)",
+        "Initialised %s with profile '%s' (ignored %d events)",
+        PLUGIN_NAME,
         _active_profile,
         len(_ignored_events),
     )
@@ -639,12 +661,12 @@ def plugin_start3(plugin_dir: str) -> str:
         "enabled" if _forward_to_edmc_log else "disabled",
     )
     logger.info("Log file path: %s", _current_log_path())
-    return "TestEventLogger"
+    return PLUGIN_NAME
 
 
 def plugin_stop() -> None:
     global _edmc_forward_handler
-    logger.info("TestEventLogger stopped")
+    logger.info("%s stopped", PLUGIN_NAME)
     if _edmc_forward_handler is not None:
         logger.removeHandler(_edmc_forward_handler)
         _edmc_forward_handler = None
@@ -672,7 +694,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
 
     current_row = 0
 
-    nb.Label(frame, text="Test Event Logger", font=("TkDefaultFont", 10, "bold")).grid(
+    nb.Label(frame, text="EDMC-LogEventMiner", font=("TkDefaultFont", 10, "bold")).grid(
         row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 4)
     )
     current_row += 1
@@ -697,10 +719,16 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     current_row += 1
 
     prefs_state.forward_to_edmc_var = tk.BooleanVar(value=_forward_to_edmc_log)
+    def _on_forward_toggle() -> None:
+        if prefs_state.forward_to_edmc_var is None:
+            return
+        _apply_forward_to_edmc_value(prefs_state.forward_to_edmc_var.get())
+
     nb.Checkbutton(
         frame,
         text="Also send log output to EDMC log",
         variable=prefs_state.forward_to_edmc_var,
+        command=_on_forward_toggle,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
     current_row += 1
 
@@ -744,9 +772,20 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     log_path_frame.grid(row=current_row, column=1, sticky=tk.W + tk.E, padx=10, pady=(0, 4))
     log_path_frame.columnconfigure(0, weight=1)
     prefs_state.log_path_var = tk.StringVar(value=_current_log_path())
-    tk.Entry(log_path_frame, textvariable=prefs_state.log_path_var, width=50).grid(
-        row=0, column=0, sticky=tk.EW
-    )
+    log_path_entry = tk.Entry(log_path_frame, textvariable=prefs_state.log_path_var, width=50)
+    log_path_entry.grid(row=0, column=0, sticky=tk.EW)
+
+    def _apply_log_path_from_var() -> None:
+        if prefs_state.log_path_var is None:
+            return
+        _apply_log_path_value(prefs_state.log_path_var.get())
+
+    def _commit_log_path(_event=None):
+        _apply_log_path_from_var()
+        return None
+
+    log_path_entry.bind("<FocusOut>", _commit_log_path)
+    log_path_entry.bind("<Return>", _commit_log_path)
 
     def _choose_log_path() -> None:
         current_value = prefs_state.log_path_var.get() if prefs_state.log_path_var else _current_log_path()
@@ -765,9 +804,11 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         )
         if selected:
             prefs_state.log_path_var.set(selected)
+            _apply_log_path_from_var()
 
     def _reset_log_path() -> None:
         prefs_state.log_path_var.set(str(_default_log_file()))
+        _apply_log_path_from_var()
 
     def _copy_log_path() -> None:
         path_value = prefs_state.log_path_var.get() if prefs_state.log_path_var else _current_log_path()
