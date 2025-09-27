@@ -26,7 +26,10 @@ With EDMC running, every journal event from the game is echoed to both the main 
 - macOS: `~/Library/Application Support/EDMarketConnector/logs/`
 - Linux: `~/.config/EDMarketConnector/logs/`
 
-
-
 ## TODO:
 - add auto updating capabilities
+
+## Disclaimer:
+I wasn't expecting to write this. All I wanted to do was to mine some specific journal events for a different
+project. I started making this via vibe coding with Codex and then I wanted to see how far I could go. 
+I did not touch any bit of code in load.py by hand as I wanted to see just what was possible. You are free to pick this apart and I welcome the feedback. My intent though is to keep this 100% vibe coded.
