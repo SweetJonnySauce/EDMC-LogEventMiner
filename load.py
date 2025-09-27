@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import logging
+import re
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set
 
@@ -97,6 +98,8 @@ class PrefsState:
         self.profile_var: Optional[tk.StringVar] = None
         self.profile_menu: Optional[tk.OptionMenu] = None
         self.new_profile_var: Optional[tk.StringVar] = None
+        self.profile_log_var: Optional[tk.BooleanVar] = None
+        self.profile_log_check: Optional[tk.Checkbutton] = None
         self.log_path_var: Optional[tk.StringVar] = None
         self.marker_var: Optional[tk.StringVar] = None
 
@@ -371,6 +374,7 @@ def _apply_log_path_value(raw_path: Optional[str]) -> None:
 
     config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
     _ensure_file_logging()
+    _update_profile_log_controls()
 
 
 def _apply_forward_to_edmc_value(raw_value: Optional[bool]) -> None:
@@ -384,6 +388,106 @@ def _apply_forward_to_edmc_value(raw_value: Optional[bool]) -> None:
     config.set(CONFIG_FORWARD_TO_EDMC_LOG, forward_native)
     if forward_native != previous:
         _sync_edmc_forwarding()
+
+
+def _sanitise_profile_suffix(name: str) -> str:
+    cleaned = re.sub(r"[^A-Za-z0-9-_]+", "_", name.strip())
+    cleaned = cleaned.strip("-_")
+    return cleaned
+
+
+def _is_default_profile(name: str) -> bool:
+    return name.strip().lower() == DEFAULT_PROFILE_NAME.lower()
+
+
+def _known_profile_suffixes() -> Set[str]:
+    suffixes = {_sanitise_profile_suffix(name) for name in _profiles.keys()}
+    suffixes.add(_sanitise_profile_suffix(DEFAULT_PROFILE_NAME))
+    suffixes.discard("")
+    return suffixes
+
+
+def _current_profile_suffix_enabled(profile_name: str) -> bool:
+    suffix = _sanitise_profile_suffix(profile_name)
+    if not suffix or _is_default_profile(profile_name):
+        return False
+    try:
+        raw_value = prefs_state.log_path_var.get() if prefs_state.log_path_var else _current_log_path()
+    except Exception:
+        raw_value = _current_log_path()
+    try:
+        current_path = Path(raw_value).expanduser()
+    except Exception:
+        current_path = _default_log_file().expanduser()
+    return current_path.stem.endswith(f"-{suffix}")
+
+
+def _set_profile_suffix_enabled(enabled: bool, profile_name: Optional[str] = None) -> None:
+    if profile_name is None:
+        profile_name = _active_profile
+
+    if _is_default_profile(profile_name):
+        enabled = False
+
+    suffix = _sanitise_profile_suffix(profile_name)
+    if not suffix:
+        enabled = False
+
+    try:
+        raw_value = prefs_state.log_path_var.get() if prefs_state.log_path_var else _current_log_path()
+    except Exception:
+        raw_value = _current_log_path()
+
+    try:
+        current_path = Path(raw_value).expanduser()
+    except Exception:
+        current_path = _default_log_file().expanduser()
+
+    stem = current_path.stem
+    if enabled:
+        for candidate_suffix in sorted(_known_profile_suffixes(), key=len, reverse=True):
+            token = f"-{candidate_suffix}"
+            if stem.endswith(token):
+                stem = stem[: -len(token)]
+                break
+        new_stem = f"{stem}-{suffix}"
+    else:
+        token = f"-{suffix}"
+        if stem.endswith(token):
+            stem = stem[: -len(token)]
+        new_stem = stem
+
+    ext = current_path.suffix or ".log"
+    new_path = current_path.with_name(new_stem + ext)
+
+    _apply_log_path_value(str(new_path))
+    if prefs_state.log_path_var is not None:
+        prefs_state.log_path_var.set(str(new_path))
+
+    if prefs_state.profile_log_var is not None:
+        prefs_state.profile_log_var.set(enabled and not _is_default_profile(profile_name) and bool(suffix))
+
+    _update_profile_log_controls()
+
+
+def _update_profile_log_controls() -> None:
+    if prefs_state.profile_log_var is None or prefs_state.profile_log_check is None:
+        return
+
+    if _is_default_profile(_active_profile):
+        prefs_state.profile_log_var.set(False)
+        prefs_state.profile_log_check.config(state=tk.DISABLED)
+        return
+
+    suffix = _sanitise_profile_suffix(_active_profile)
+    if not suffix:
+        prefs_state.profile_log_var.set(False)
+        prefs_state.profile_log_check.config(state=tk.DISABLED)
+        return
+
+    is_enabled = _current_profile_suffix_enabled(_active_profile)
+    prefs_state.profile_log_var.set(is_enabled)
+    prefs_state.profile_log_check.config(state=tk.NORMAL)
 
 
 def _get_current_settings() -> Dict[str, Any]:
@@ -477,6 +581,7 @@ def _populate_prefs_fields() -> None:
         prefs_state.log_path_var.set(_current_log_path())
     if prefs_state.marker_var is not None:
         prefs_state.marker_var.set("")
+    _update_profile_log_controls()
 
 
 def _update_state_from_widgets() -> Dict[str, Any]:
@@ -539,6 +644,13 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         _logging_enabled = logging_enabled
         config.set(CONFIG_LOGGING_ENABLED, logging_enabled)
 
+    if prefs_state.profile_log_var is not None:
+        desired_enabled = bool(prefs_state.profile_log_var.get())
+        if desired_enabled != _current_profile_suffix_enabled(_active_profile):
+            _set_profile_suffix_enabled(desired_enabled)
+        else:
+            _update_profile_log_controls()
+
     _sync_edmc_forwarding()
 
     return _sanitize_settings(_get_current_settings())
@@ -552,6 +664,7 @@ def _refresh_profile_menu() -> None:
     for name in sorted(_profiles.keys()):
         menu.add_command(label=name, command=lambda value=name: _on_profile_selected(value))
     prefs_state.profile_var.set(_active_profile)
+    _update_profile_log_controls()
 
 
 def _save_profiles() -> None:
@@ -759,6 +872,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     nb.Button(profile_frame, text="Delete", command=_on_delete_profile).grid(
         row=0, column=1, sticky=tk.W, padx=(8, 0)
     )
+
     current_row += 1
 
     nb.Label(frame, text="Profile name:").grid(
@@ -773,6 +887,22 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     nb.Button(new_profile_frame, text="Save profile", command=_on_create_profile).grid(
         row=0, column=1, sticky=tk.W, padx=(8, 0)
     )
+
+    prefs_state.profile_log_var = tk.BooleanVar(value=False)
+
+    def _on_profile_log_toggle() -> None:
+        if prefs_state.profile_log_var is None:
+            return
+        _set_profile_suffix_enabled(bool(prefs_state.profile_log_var.get()))
+
+    profile_log_check = nb.Checkbutton(
+        new_profile_frame,
+        text="Append profile name to log file",
+        variable=prefs_state.profile_log_var,
+        command=_on_profile_log_toggle,
+    )
+    profile_log_check.grid(row=0, column=2, sticky=tk.W, padx=(8, 0))
+    prefs_state.profile_log_check = profile_log_check
     current_row += 1
 
     nb.Label(frame, text="Log file location:").grid(
@@ -920,7 +1050,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     prefs_state.include_payload_var = tk.BooleanVar(value=_include_payload)
     nb.Checkbutton(
         frame,
-        text="Include full event payload in log entries",
+        text="Include event payload in log entries",
         variable=prefs_state.include_payload_var,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 6))
     current_row += 1
