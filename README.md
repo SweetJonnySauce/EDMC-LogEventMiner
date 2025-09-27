@@ -22,3 +22,7 @@ With EDMC running, every journal event from the game is echoed to both the main 
 3. Click **Save**. Changes take effect immediately.
 
 Any event listed there—such as `Fileheader` or `Music`—will be skipped in the dedicated log.
+
+TODO:
+- Rename repo
+- Make log file unique to profile.

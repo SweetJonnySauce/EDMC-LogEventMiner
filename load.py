@@ -8,6 +8,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set
 
 import tkinter as tk
+from tkinter import filedialog
 
 try:
     from config import appname, config
@@ -26,6 +27,7 @@ CONFIG_INCLUDE_PAYLOAD = f"{LOG_KEY_PREFIX}include_payload"
 CONFIG_PAYLOAD_LIMIT = f"{LOG_KEY_PREFIX}payload_limit"
 CONFIG_LOGGING_ENABLED = f"{LOG_KEY_PREFIX}logging_enabled"
 CONFIG_FORWARD_TO_EDMC_LOG = f"{LOG_KEY_PREFIX}forward_to_edmc_log"
+CONFIG_LOG_FILE_PATH = f"{LOG_KEY_PREFIX}log_file_path"
 CONFIG_PROFILES = f"{LOG_KEY_PREFIX}profiles"
 CONFIG_ACTIVE_PROFILE = f"{LOG_KEY_PREFIX}active_profile"
 
@@ -44,6 +46,7 @@ if not logger.hasHandlers():
     handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
+logger.propagate = False
 
 
 class _ForwardToEDMCHandler(logging.Handler):
@@ -77,6 +80,7 @@ class PrefsState:
         self.profile_menu: Optional[tk.OptionMenu] = None
         self.new_profile_var: Optional[tk.StringVar] = None
         self.log_path_var: Optional[tk.StringVar] = None
+        self.marker_var: Optional[tk.StringVar] = None
 
 
 prefs_state = PrefsState()
@@ -88,6 +92,7 @@ _include_payload: bool = True
 _payload_limit: Optional[int] = None
 _logging_enabled: bool = True
 _forward_to_edmc_log: bool = False
+_custom_log_path: Optional[Path] = None
 _profiles: Dict[str, Dict[str, Any]] = {}
 _active_profile: str = DEFAULT_PROFILE_NAME
 _log_file_path: Optional[Path] = None
@@ -122,6 +127,7 @@ def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "payload_limit": settings.get("payload_limit"),
         "logging_enabled": bool(settings.get("logging_enabled", True)),
         "forward_to_edmc_log": bool(settings.get("forward_to_edmc_log", False)),
+        "log_file_path": settings.get("log_file_path"),
     }
 
 
@@ -134,6 +140,7 @@ def _default_settings() -> Dict[str, Any]:
         "payload_limit": None,
         "logging_enabled": True,
         "forward_to_edmc_log": False,
+        "log_file_path": None,
     }
 
 
@@ -166,6 +173,20 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
 
     forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
+    raw_log_path = settings.get("log_file_path")
+    log_file_path: Optional[str]
+    if isinstance(raw_log_path, str):
+        cleaned = raw_log_path.strip()
+        if cleaned:
+            try:
+                log_file_path = str(Path(cleaned).expanduser())
+            except Exception:
+                log_file_path = None
+        else:
+            log_file_path = None
+    else:
+        log_file_path = None
+
     return {
         "ignored_events": sorted(ignored),
         "included_events": sorted(included),
@@ -174,10 +195,11 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
         "payload_limit": payload_limit,
         "logging_enabled": logging_enabled,
         "forward_to_edmc_log": forward_to_edmc_log,
+        "log_file_path": log_file_path,
     }
 
 
-def _resolve_log_file() -> Path:
+def _default_log_file() -> Path:
     candidates: list[Path] = []
     for attr in ("logs_dir", "log_dir", "logdir"):
         value = getattr(config, attr, None)
@@ -198,26 +220,76 @@ def _resolve_log_file() -> Path:
     return Path.cwd() / f"{PLUGIN_NAME}.log"
 
 
+def _active_log_file() -> Path:
+    if _custom_log_path is not None:
+        return _custom_log_path
+    return _default_log_file()
+
+
 def _ensure_file_logging() -> None:
-    global _log_file_path
+    global _log_file_path, _custom_log_path
+
+    desired_path = _active_log_file().expanduser()
+
+    existing_handler: Optional[logging.Handler] = None
     for handler in logger.handlers:
         if getattr(handler, FILE_HANDLER_FLAG, False):
-            base_filename = getattr(handler, "baseFilename", None)
-            if base_filename:
-                _log_file_path = Path(base_filename)
-            return
+            existing_handler = handler
+            break
+
+    current_path: Optional[Path] = None
+    if existing_handler is not None:
+        base_filename = getattr(existing_handler, "baseFilename", None)
+        if base_filename:
+            current_path = Path(base_filename)
+
+    if current_path is not None and current_path == desired_path:
+        _log_file_path = desired_path
+        return
+
+    previous_path = current_path
+
+    if existing_handler is not None and previous_path is not None and previous_path != desired_path:
+        try:
+            record = logger.makeRecord(
+                logger.name,
+                logging.INFO,
+                __file__,
+                0,
+                "Log file path changed to %s",
+                (str(desired_path),),
+                None,
+            )
+            existing_handler.handle(record)
+            existing_handler.flush()
+        except Exception:
+            pass
+
+    if existing_handler is not None:
+        logger.removeHandler(existing_handler)
+        try:
+            existing_handler.close()
+        except Exception:
+            pass
 
     try:
-        log_file = _resolve_log_file()
-        _log_file_path = log_file
-        log_file.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(log_file, encoding="utf-8")
+        desired_path.parent.mkdir(parents=True, exist_ok=True)
+        handler = logging.FileHandler(desired_path, encoding="utf-8")
         handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
         setattr(handler, FILE_HANDLER_FLAG, True)
         logger.addHandler(handler)
-        logger.debug("File logging initialised at %s", log_file)
+        _log_file_path = desired_path
+        logger.debug("File logging initialised at %s", desired_path)
+        if previous_path is None or previous_path != desired_path:
+            logger.info("Log file path changed to %s", desired_path)
     except Exception as exc:  # pragma: no cover
-        logger.warning("Unable to initialise log file: %s", exc)
+        logger.warning("Unable to initialise log file at %s: %s", desired_path, exc)
+        if _custom_log_path is not None:
+            logger.warning("Reverting to default log file location.")
+            _custom_log_path = None
+            _ensure_file_logging()
+        else:
+            _log_file_path = None
 
 
 _ensure_file_logging()
@@ -237,11 +309,22 @@ def _sync_edmc_forwarding() -> None:
             _edmc_forward_handler = None
 
 
+def _log_marker(message: str) -> None:
+    """Emit a custom marker message to the plugin log."""
+
+    text = message.strip()
+    if not text:
+        text = "Manual marker"
+
+    _ensure_file_logging()
+    logger.info("===== MARKER: %s =====", text)
+
+
 def _current_log_path() -> str:
     if _log_file_path is not None:
         return str(_log_file_path)
     try:
-        return str(_resolve_log_file())
+        return str(_active_log_file())
     except Exception:  # pragma: no cover
         return "Log file unavailable"
 
@@ -255,11 +338,12 @@ def _get_current_settings() -> Dict[str, Any]:
         "payload_limit": _payload_limit,
         "logging_enabled": _logging_enabled,
         "forward_to_edmc_log": _forward_to_edmc_log,
+        "log_file_path": str(_custom_log_path) if _custom_log_path else None,
     }
 
 
 def _apply_settings(settings: Dict[str, Any]) -> None:
-    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
 
     ignored = _parse_event_list("\n".join(settings.get("ignored_events", [])))
     if not ignored:
@@ -290,6 +374,15 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     _logging_enabled = bool(settings.get("logging_enabled", True))
     _forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
+    raw_log_path = settings.get("log_file_path")
+    if isinstance(raw_log_path, str) and raw_log_path.strip():
+        try:
+            _custom_log_path = Path(raw_log_path).expanduser()
+        except Exception:
+            _custom_log_path = None
+    else:
+        _custom_log_path = None
+
     config.set(CONFIG_IGNORE_EVENTS, _serialise_events(_ignored_events))
     config.set(CONFIG_INCLUDE_EVENTS, _serialise_events(_included_events))
     config.set(CONFIG_FILTER_MODE, _filter_mode)
@@ -297,6 +390,8 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     config.set(CONFIG_PAYLOAD_LIMIT, "" if _payload_limit is None else str(_payload_limit))
     config.set(CONFIG_LOGGING_ENABLED, _logging_enabled)
     config.set(CONFIG_FORWARD_TO_EDMC_LOG, _forward_to_edmc_log)
+    config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
+    _ensure_file_logging()
     _sync_edmc_forwarding()
 
 
@@ -323,10 +418,12 @@ def _populate_prefs_fields() -> None:
         prefs_state.new_profile_var.set(_active_profile)
     if prefs_state.log_path_var is not None:
         prefs_state.log_path_var.set(_current_log_path())
+    if prefs_state.marker_var is not None:
+        prefs_state.marker_var.set("")
 
 
 def _update_state_from_widgets() -> Dict[str, Any]:
-    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
 
     if prefs_state.ignore_widget is not None:
         raw_ignore = prefs_state.ignore_widget.get("1.0", tk.END)
@@ -343,6 +440,25 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         _included_events.clear()
         _included_events.update(include_events)
         config.set(CONFIG_INCLUDE_EVENTS, _serialise_events(include_events))
+
+    if prefs_state.log_path_var is not None:
+        raw_path = (prefs_state.log_path_var.get() or "").strip()
+        default_path = str(_default_log_file())
+        if raw_path:
+            try:
+                candidate = Path(raw_path).expanduser()
+            except Exception:
+                candidate = None
+            if candidate is not None and candidate != Path(default_path):
+                _custom_log_path = candidate
+            elif candidate is not None and candidate == Path(default_path):
+                _custom_log_path = None
+            else:
+                _custom_log_path = None
+        else:
+            _custom_log_path = None
+        config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
+        _ensure_file_logging()
 
     if prefs_state.mode_var is not None:
         mode_value = prefs_state.mode_var.get() or "exclude"
@@ -522,6 +638,7 @@ def plugin_start3(plugin_dir: str) -> str:
         "Forwarding to EDMC log %s",
         "enabled" if _forward_to_edmc_log else "disabled",
     )
+    logger.info("Log file path: %s", _current_log_path())
     return "TestEventLogger"
 
 
@@ -531,6 +648,15 @@ def plugin_stop() -> None:
     if _edmc_forward_handler is not None:
         logger.removeHandler(_edmc_forward_handler)
         _edmc_forward_handler = None
+    for handler in list(logger.handlers):
+        if getattr(handler, FILE_HANDLER_FLAG, False):
+            logger.removeHandler(handler)
+            try:
+                handler.close()
+            except Exception:
+                pass
+    global _log_file_path
+    _log_file_path = None
 
 
 def plugin_app(parent: tk.Frame) -> Optional[tk.Frame]:
@@ -618,9 +744,30 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     log_path_frame.grid(row=current_row, column=1, sticky=tk.W + tk.E, padx=10, pady=(0, 4))
     log_path_frame.columnconfigure(0, weight=1)
     prefs_state.log_path_var = tk.StringVar(value=_current_log_path())
-    tk.Entry(log_path_frame, textvariable=prefs_state.log_path_var, state="readonly", width=50).grid(
+    tk.Entry(log_path_frame, textvariable=prefs_state.log_path_var, width=50).grid(
         row=0, column=0, sticky=tk.EW
     )
+
+    def _choose_log_path() -> None:
+        current_value = prefs_state.log_path_var.get() if prefs_state.log_path_var else _current_log_path()
+        try:
+            current_path = Path(current_value).expanduser()
+        except Exception:
+            current_path = _active_log_file()
+        initialdir = str(current_path.parent) if current_path.parent else str(Path.home())
+        initialfile = current_path.name
+        selected = filedialog.asksaveasfilename(
+            parent=frame,
+            title="Select log file",
+            initialdir=initialdir,
+            initialfile=initialfile,
+            defaultextension=".log",
+        )
+        if selected:
+            prefs_state.log_path_var.set(selected)
+
+    def _reset_log_path() -> None:
+        prefs_state.log_path_var.set(str(_default_log_file()))
 
     def _copy_log_path() -> None:
         path_value = prefs_state.log_path_var.get() if prefs_state.log_path_var else _current_log_path()
@@ -638,7 +785,35 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         except Exception as exc:  # pragma: no cover
             logger.warning("Unable to copy log path to clipboard: %s", exc)
 
+    nb.Button(log_path_frame, text="Browse...", command=_choose_log_path).grid(
+        row=0, column=1, sticky=tk.W, padx=(8, 0)
+    )
+    nb.Button(log_path_frame, text="Reset", command=_reset_log_path).grid(
+        row=0, column=2, sticky=tk.W, padx=(8, 0)
+    )
     nb.Button(log_path_frame, text="Copy path", command=_copy_log_path).grid(
+        row=0, column=3, sticky=tk.W, padx=(8, 0)
+    )
+    current_row += 1
+
+    nb.Label(frame, text="Custom log marker:").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(4, 0)
+    )
+    marker_frame = nb.Frame(frame)
+    marker_frame.grid(row=current_row, column=1, sticky=tk.W + tk.E, padx=10, pady=(4, 0))
+    marker_frame.columnconfigure(0, weight=1)
+    prefs_state.marker_var = tk.StringVar()
+    tk.Entry(marker_frame, textvariable=prefs_state.marker_var, width=40).grid(
+        row=0, column=0, sticky=tk.EW
+    )
+
+    def _post_marker() -> None:
+        if prefs_state.marker_var is None:
+            return
+        message = prefs_state.marker_var.get()
+        _log_marker(message)
+
+    nb.Button(marker_frame, text="Post marker", command=_post_marker).grid(
         row=0, column=1, sticky=tk.W, padx=(8, 0)
     )
     current_row += 1
