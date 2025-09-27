@@ -1,9 +1,11 @@
 name: Package Release
 
 on:
+  release:
+    types: [created]
   push:
     tags:
-      - '*'          # run whenever you push a tag
+      - '*'
 
 jobs:
   build-and-publish:
