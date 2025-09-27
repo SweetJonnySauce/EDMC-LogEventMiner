@@ -17,7 +17,25 @@ except ImportError:  # pragma: no cover
     from edmc_mocks import appname, config, nb  # type: ignore
 
 
-PLUGIN_NAME = Path(__file__).resolve().parent.name
+PLUGIN_DIR = Path(__file__).resolve().parent
+PLUGIN_NAME = PLUGIN_DIR.name
+VERSION_FILE = PLUGIN_DIR / "VERSION"
+
+
+def _read_plugin_version() -> str:
+    try:
+        raw = VERSION_FILE.read_text(encoding="utf-8").strip()
+    except OSError:
+        return "0.0.0"
+    return raw or "0.0.0"
+
+
+PLUGIN_VERSION = _read_plugin_version()
+plugin_info = {
+    "plugin_version": PLUGIN_VERSION,
+    "plugin_name": PLUGIN_NAME,
+    "plugin_description": "Logs journal events with include/exclude filters and profiles.",
+}
 LOG_KEY_PREFIX = "testeventlogger_"
 
 CONFIG_IGNORE_EVENTS = f"{LOG_KEY_PREFIX}ignore_events"
@@ -633,17 +651,9 @@ def _current_payload_limit() -> Optional[int]:
 # ---------------------------------------------------------------------------
 # EDMC plugin hooks
 # ---------------------------------------------------------------------------
-
-
-plugin_info = {
-    "plugin_version": "1.0.0",
-    "plugin_name": PLUGIN_NAME,
-    "plugin_description": "Logs journal events with include/exclude filters and profiles.",
-}
-
-
 def plugin_start3(plugin_dir: str) -> str:
     _load_profiles()
+    logger.info("Running %s version %s", PLUGIN_NAME, PLUGIN_VERSION)
     logger.info(
         "Initialised %s with profile '%s' (ignored %d events)",
         PLUGIN_NAME,

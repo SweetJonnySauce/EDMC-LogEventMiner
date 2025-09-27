@@ -23,6 +23,14 @@ With EDMC running, every journal event from the game is echoed to both the main 
 
 Any event listed there—such as `Fileheader` or `Music`—will be skipped in the dedicated log.
 
+## Versioning
+
+Before you cut a release:
+- Update the version string in the `VERSION` file.
+- Reflect the changes in `CHANGELOG.md` under a new dated heading.
+- Run `python3 -m compileall load.py` (or your preferred test suite) to confirm the build is healthy.
+- Commit your changes with a message such as `chore: release vX.Y.Z`.
+
 TODO:
 - Make log file unique to profile.
 - Add button to profile on UI to add profile name to log file.
