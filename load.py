@@ -622,21 +622,22 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 6))
     current_row += 1
 
-    nb.Label(frame, text="Payload character limit (blank for unlimited):").grid(
-        row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 6)
-    )
-    prefs_state.payload_limit_var = tk.StringVar(value="" if _payload_limit is None else str(_payload_limit))
-    nb.Entry(frame, textvariable=prefs_state.payload_limit_var, width=10).grid(
-        row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 6)
-    )
-    current_row += 1
-
     prefs_state.include_payload_var = tk.BooleanVar(value=_include_payload)
     nb.Checkbutton(
         frame,
         text="Include full event payload in log entries",
         variable=prefs_state.include_payload_var,
-    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 6))
+    current_row += 1
+
+    nb.Label(frame, text="Payload character limit (blank for unlimited):").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 10)
+    )
+    prefs_state.payload_limit_var = tk.StringVar(value="" if _payload_limit is None else str(_payload_limit))
+    nb.Entry(frame, textvariable=prefs_state.payload_limit_var, width=10).grid(
+        row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 10)
+    )
+    current_row += 1
 
     _populate_prefs_fields()
     _refresh_profile_menu()
