@@ -2,6 +2,8 @@
 
 EDMC-LogEventMiner is a lightweight [Elite Dangerous Market Connector](https://github.com/EDCD/EDMarketConnector) plugin that mirrors every incoming journal entry to its own log file while letting you exclude noisy events.
 
+This plugin is not meant to enhance youre Elite Dangerous gameplay, rather is for those that are interesting in knowing more about the journal event whether it's for curiosity or developing your own plugin. 
+
 ## Features
 
 - Creates a dedicated journal log so you can analyse events without wading through EDMC's main log.
@@ -9,10 +11,11 @@ EDMC-LogEventMiner is a lightweight [Elite Dangerous Market Connector](https://g
 - Forward entries to the EDMC log and add custom markers directly from the preferences panel.
 - Manage multiple logging “profiles”, each with its own filters and optional profile-based log filename.
 - Adjust log location on the fly and optionally append the active profile name to the log file.
+- Rotate log files automatically with configurable thresholds per profile.
 
 ## Installation
 
-1. Download or clone this repository.
+1. Download the latest release.
 2. Copy the `EDMC-LogEventMiner` folder into your EDMC plugins directory (`File > Settings > Plugins > Open`).
 3. Restart EDMC so it discovers the new plugin.
 
@@ -23,24 +26,7 @@ With EDMC running, every journal event from the game is echoed to both the main 
 - macOS: `~/Library/Application Support/EDMarketConnector/logs/`
 - Linux: `~/.config/EDMarketConnector/logs/`
 
-### Excluding Events
 
-1. In EDMC, open `File > Settings > Plugins` and select **EDMC-LogEventMiner**.
-2. Enter the event names you want to ignore (one per line, or separated by commas/semicolons).
-3. Click **Save**. Changes take effect immediately.
 
-Any event listed there—such as `Fileheader` or `Music`—will be skipped in the dedicated log.
-
-## Versioning
-
-Before you cut a release:
-- Update the version string in the `VERSION` file.
-- Reflect the changes in `CHANGELOG.md` under a new dated heading.
-- Run `python3 -m compileall load.py` (or your preferred test suite) to confirm the build is healthy.
-- Commit your changes with a message such as `chore: release vX.Y.Z`.
-
-TODO:
-- Make log file unique to profile.
-- Take "full" off the payload label
-- add log rotation capabilities with options. 
+## TODO:
 - add auto updating capabilities

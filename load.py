@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set
 
@@ -47,6 +48,9 @@ CONFIG_PAYLOAD_LIMIT = f"{LOG_KEY_PREFIX}payload_limit"
 CONFIG_LOGGING_ENABLED = f"{LOG_KEY_PREFIX}logging_enabled"
 CONFIG_FORWARD_TO_EDMC_LOG = f"{LOG_KEY_PREFIX}forward_to_edmc_log"
 CONFIG_LOG_FILE_PATH = f"{LOG_KEY_PREFIX}log_file_path"
+CONFIG_ROTATION_ENABLED = f"{LOG_KEY_PREFIX}rotation_enabled"
+CONFIG_ROTATION_MAX_BYTES = f"{LOG_KEY_PREFIX}rotation_max_bytes"
+CONFIG_ROTATION_BACKUP_COUNT = f"{LOG_KEY_PREFIX}rotation_backup_count"
 CONFIG_PROFILES = f"{LOG_KEY_PREFIX}profiles"
 CONFIG_ACTIVE_PROFILE = f"{LOG_KEY_PREFIX}active_profile"
 
@@ -95,6 +99,11 @@ class PrefsState:
         self.forward_to_edmc_var: Optional[tk.BooleanVar] = None
         self.payload_limit_var: Optional[tk.StringVar] = None
         self.logging_enabled_var: Optional[tk.BooleanVar] = None
+        self.rotation_enabled_var: Optional[tk.BooleanVar] = None
+        self.rotation_max_bytes_var: Optional[tk.StringVar] = None
+        self.rotation_backup_count_var: Optional[tk.StringVar] = None
+        self.rotation_max_bytes_entry: Optional[tk.Entry] = None
+        self.rotation_backup_count_entry: Optional[tk.Entry] = None
         self.profile_var: Optional[tk.StringVar] = None
         self.profile_menu: Optional[tk.OptionMenu] = None
         self.new_profile_var: Optional[tk.StringVar] = None
@@ -113,6 +122,9 @@ _include_payload: bool = True
 _payload_limit: Optional[int] = None
 _logging_enabled: bool = True
 _forward_to_edmc_log: bool = False
+_log_rotation_enabled: bool = True
+_log_rotation_max_bytes: int = 5 * 1024 * 1024
+_log_rotation_backup_count: int = 5
 _custom_log_path: Optional[Path] = None
 _profiles: Dict[str, Dict[str, Any]] = {}
 _active_profile: str = DEFAULT_PROFILE_NAME
@@ -149,6 +161,9 @@ def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "logging_enabled": bool(settings.get("logging_enabled", True)),
         "forward_to_edmc_log": bool(settings.get("forward_to_edmc_log", False)),
         "log_file_path": settings.get("log_file_path"),
+        "rotation_enabled": bool(settings.get("rotation_enabled", True)),
+        "rotation_max_bytes": settings.get("rotation_max_bytes"),
+        "rotation_backup_count": settings.get("rotation_backup_count"),
     }
 
 
@@ -162,6 +177,9 @@ def _default_settings() -> Dict[str, Any]:
         "logging_enabled": True,
         "forward_to_edmc_log": False,
         "log_file_path": None,
+        "rotation_enabled": True,
+        "rotation_max_bytes": 5 * 1024 * 1024,
+        "rotation_backup_count": 5,
     }
 
 
@@ -194,6 +212,24 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
 
     forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
+    rotation_enabled = bool(settings.get("rotation_enabled", True))
+
+    rotation_max_bytes_raw = settings.get("rotation_max_bytes")
+    try:
+        rotation_max_bytes = int(rotation_max_bytes_raw)
+        if rotation_max_bytes <= 0:
+            rotation_max_bytes = base["rotation_max_bytes"]
+    except (TypeError, ValueError):
+        rotation_max_bytes = base["rotation_max_bytes"]
+
+    rotation_backup_raw = settings.get("rotation_backup_count")
+    try:
+        rotation_backup_count = int(rotation_backup_raw)
+        if rotation_backup_count < 1:
+            rotation_backup_count = base["rotation_backup_count"]
+    except (TypeError, ValueError):
+        rotation_backup_count = base["rotation_backup_count"]
+
     raw_log_path = settings.get("log_file_path")
     log_file_path: Optional[str]
     if isinstance(raw_log_path, str):
@@ -217,6 +253,9 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
         "logging_enabled": logging_enabled,
         "forward_to_edmc_log": forward_to_edmc_log,
         "log_file_path": log_file_path,
+        "rotation_enabled": rotation_enabled,
+        "rotation_max_bytes": rotation_max_bytes,
+        "rotation_backup_count": rotation_backup_count,
     }
 
 
@@ -264,9 +303,23 @@ def _ensure_file_logging() -> None:
         if base_filename:
             current_path = Path(base_filename)
 
-    if current_path is not None and current_path == desired_path:
-        _log_file_path = desired_path
-        return
+    requires_rotation = _log_rotation_enabled
+
+    if existing_handler is not None and current_path == desired_path:
+        handler_matches = False
+        if requires_rotation and isinstance(existing_handler, RotatingFileHandler):
+            max_bytes = getattr(existing_handler, "maxBytes", None)
+            backup_count = getattr(existing_handler, "backupCount", None)
+            handler_matches = (
+                max_bytes == _log_rotation_max_bytes
+                and backup_count == _log_rotation_backup_count
+            )
+        elif not requires_rotation and not isinstance(existing_handler, RotatingFileHandler):
+            handler_matches = True
+
+        if handler_matches:
+            _log_file_path = desired_path
+            return
 
     previous_path = current_path
 
@@ -295,7 +348,15 @@ def _ensure_file_logging() -> None:
 
     try:
         desired_path.parent.mkdir(parents=True, exist_ok=True)
-        handler = logging.FileHandler(desired_path, encoding="utf-8")
+        if requires_rotation:
+            handler = RotatingFileHandler(
+                desired_path,
+                encoding="utf-8",
+                maxBytes=_log_rotation_max_bytes,
+                backupCount=_log_rotation_backup_count,
+            )
+        else:
+            handler = logging.FileHandler(desired_path, encoding="utf-8")
         handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
         setattr(handler, FILE_HANDLER_FLAG, True)
         logger.addHandler(handler)
@@ -490,6 +551,17 @@ def _update_profile_log_controls() -> None:
     prefs_state.profile_log_check.config(state=tk.NORMAL)
 
 
+def _refresh_rotation_inputs() -> None:
+    if prefs_state.rotation_enabled_var is None:
+        return
+    enabled = bool(prefs_state.rotation_enabled_var.get())
+    state = tk.NORMAL if enabled else tk.DISABLED
+    if prefs_state.rotation_max_bytes_entry is not None:
+        prefs_state.rotation_max_bytes_entry.config(state=state)
+    if prefs_state.rotation_backup_count_entry is not None:
+        prefs_state.rotation_backup_count_entry.config(state=state)
+
+
 def _get_current_settings() -> Dict[str, Any]:
     return {
         "ignored_events": sorted(_ignored_events),
@@ -500,11 +572,17 @@ def _get_current_settings() -> Dict[str, Any]:
         "logging_enabled": _logging_enabled,
         "forward_to_edmc_log": _forward_to_edmc_log,
         "log_file_path": str(_custom_log_path) if _custom_log_path else None,
+        "rotation_enabled": _log_rotation_enabled,
+        "rotation_max_bytes": _log_rotation_max_bytes,
+        "rotation_backup_count": _log_rotation_backup_count,
     }
 
 
 def _apply_settings(settings: Dict[str, Any]) -> None:
     global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
+    global _log_rotation_enabled, _log_rotation_max_bytes, _log_rotation_backup_count
+
+    defaults = _default_settings()
 
     ignored = _parse_event_list("\n".join(settings.get("ignored_events", [])))
     if not ignored:
@@ -535,6 +613,32 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     _logging_enabled = bool(settings.get("logging_enabled", True))
     _forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
+    _log_rotation_enabled = bool(settings.get("rotation_enabled", True))
+
+    rotation_bytes = settings.get("rotation_max_bytes")
+    if isinstance(rotation_bytes, (int, float)):
+        rotation_bytes = int(rotation_bytes)
+    else:
+        try:
+            rotation_bytes = int(str(rotation_bytes))
+        except (TypeError, ValueError):
+            rotation_bytes = defaults["rotation_max_bytes"]
+    if rotation_bytes <= 0:
+        rotation_bytes = defaults["rotation_max_bytes"]
+    _log_rotation_max_bytes = rotation_bytes
+
+    rotation_backups = settings.get("rotation_backup_count")
+    if isinstance(rotation_backups, (int, float)):
+        rotation_backups = int(rotation_backups)
+    else:
+        try:
+            rotation_backups = int(str(rotation_backups))
+        except (TypeError, ValueError):
+            rotation_backups = defaults["rotation_backup_count"]
+    if rotation_backups < 1:
+        rotation_backups = defaults["rotation_backup_count"]
+    _log_rotation_backup_count = rotation_backups
+
     raw_log_path = settings.get("log_file_path")
     if isinstance(raw_log_path, str) and raw_log_path.strip():
         try:
@@ -552,6 +656,9 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     config.set(CONFIG_LOGGING_ENABLED, _logging_enabled)
     config.set(CONFIG_FORWARD_TO_EDMC_LOG, _forward_to_edmc_log)
     config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
+    config.set(CONFIG_ROTATION_ENABLED, _log_rotation_enabled)
+    config.set(CONFIG_ROTATION_MAX_BYTES, str(_log_rotation_max_bytes))
+    config.set(CONFIG_ROTATION_BACKUP_COUNT, str(_log_rotation_backup_count))
     _ensure_file_logging()
     _sync_edmc_forwarding()
 
@@ -582,10 +689,18 @@ def _populate_prefs_fields() -> None:
     if prefs_state.marker_var is not None:
         prefs_state.marker_var.set("")
     _update_profile_log_controls()
+    if prefs_state.rotation_enabled_var is not None:
+        prefs_state.rotation_enabled_var.set(_log_rotation_enabled)
+    if prefs_state.rotation_max_bytes_var is not None:
+        prefs_state.rotation_max_bytes_var.set(str(_log_rotation_max_bytes))
+    if prefs_state.rotation_backup_count_var is not None:
+        prefs_state.rotation_backup_count_var.set(str(_log_rotation_backup_count))
+    _refresh_rotation_inputs()
 
 
 def _update_state_from_widgets() -> Dict[str, Any]:
     global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
+    global _log_rotation_enabled, _log_rotation_max_bytes, _log_rotation_backup_count
 
     if prefs_state.ignore_widget is not None:
         raw_ignore = prefs_state.ignore_widget.get("1.0", tk.END)
@@ -644,6 +759,39 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         _logging_enabled = logging_enabled
         config.set(CONFIG_LOGGING_ENABLED, logging_enabled)
 
+    defaults = _default_settings()
+
+    if prefs_state.rotation_enabled_var is not None:
+        rotation_enabled = bool(prefs_state.rotation_enabled_var.get())
+        _log_rotation_enabled = rotation_enabled
+        config.set(CONFIG_ROTATION_ENABLED, rotation_enabled)
+
+    if prefs_state.rotation_max_bytes_var is not None:
+        raw_bytes = (prefs_state.rotation_max_bytes_var.get() or "").strip()
+        try:
+            parsed_bytes = int(raw_bytes)
+        except ValueError:
+            parsed_bytes = defaults["rotation_max_bytes"]
+        if parsed_bytes <= 0:
+            parsed_bytes = defaults["rotation_max_bytes"]
+        _log_rotation_max_bytes = parsed_bytes
+        prefs_state.rotation_max_bytes_var.set(str(parsed_bytes))
+        config.set(CONFIG_ROTATION_MAX_BYTES, str(parsed_bytes))
+
+    if prefs_state.rotation_backup_count_var is not None:
+        raw_backups = (prefs_state.rotation_backup_count_var.get() or "").strip()
+        try:
+            parsed_backups = int(raw_backups)
+        except ValueError:
+            parsed_backups = defaults["rotation_backup_count"]
+        if parsed_backups < 1:
+            parsed_backups = defaults["rotation_backup_count"]
+        _log_rotation_backup_count = parsed_backups
+        prefs_state.rotation_backup_count_var.set(str(parsed_backups))
+        config.set(CONFIG_ROTATION_BACKUP_COUNT, str(parsed_backups))
+
+    _ensure_file_logging()
+    _refresh_rotation_inputs()
     if prefs_state.profile_log_var is not None:
         desired_enabled = bool(prefs_state.profile_log_var.get())
         if desired_enabled != _current_profile_suffix_enabled(_active_profile):
@@ -976,6 +1124,61 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         row=0, column=3, sticky=tk.W, padx=(8, 0)
     )
     current_row += 1
+
+    nb.Label(frame, text="Log rotation:").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 4)
+    )
+    rotation_frame = nb.Frame(frame)
+    rotation_frame.grid(row=current_row, column=1, sticky=tk.W + tk.E, padx=10, pady=(0, 4))
+    rotation_frame.columnconfigure(1, weight=1)
+
+    prefs_state.rotation_enabled_var = tk.BooleanVar(value=_log_rotation_enabled)
+    prefs_state.rotation_max_bytes_var = tk.StringVar(value=str(_log_rotation_max_bytes))
+    prefs_state.rotation_backup_count_var = tk.StringVar(value=str(_log_rotation_backup_count))
+
+    def _commit_rotation_settings(_event=None):
+        _update_state_from_widgets()
+        return None
+
+    def _on_rotation_toggle() -> None:
+        _update_state_from_widgets()
+
+    rotation_check = nb.Checkbutton(
+        rotation_frame,
+        text="Enable log rotation",
+        variable=prefs_state.rotation_enabled_var,
+        command=_on_rotation_toggle,
+    )
+    rotation_check.grid(row=0, column=0, columnspan=3, sticky=tk.W)
+
+    nb.Label(rotation_frame, text="Max size (bytes):").grid(
+        row=1, column=0, sticky=tk.W, pady=(4, 0)
+    )
+    rotation_max_entry = nb.Entry(
+        rotation_frame,
+        textvariable=prefs_state.rotation_max_bytes_var,
+        width=12,
+    )
+    rotation_max_entry.grid(row=1, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    rotation_max_entry.bind("<FocusOut>", _commit_rotation_settings)
+    rotation_max_entry.bind("<Return>", _commit_rotation_settings)
+
+    nb.Label(rotation_frame, text="Backups:").grid(
+        row=1, column=2, sticky=tk.W, padx=(16, 0), pady=(4, 0))
+    rotation_backup_entry = nb.Entry(
+        rotation_frame,
+        textvariable=prefs_state.rotation_backup_count_var,
+        width=6,
+    )
+    rotation_backup_entry.grid(row=1, column=3, sticky=tk.W, padx=(4, 0), pady=(4, 0))
+    rotation_backup_entry.bind("<FocusOut>", _commit_rotation_settings)
+    rotation_backup_entry.bind("<Return>", _commit_rotation_settings)
+
+    prefs_state.rotation_max_bytes_entry = rotation_max_entry
+    prefs_state.rotation_backup_count_entry = rotation_backup_entry
+
+    current_row += 1
+    _refresh_rotation_inputs()
 
     nb.Label(frame, text="Custom log marker:").grid(
         row=current_row, column=0, sticky=tk.W, padx=10, pady=(4, 0)
