@@ -1,26 +1,28 @@
-name: Build Release
+name: Package Release
 
 on:
   push:
     tags:
-      - 'v*'
+      - 'v*'          # run whenever you push a tag like v1.2.3
 
 jobs:
-  build:
+  build-and-publish:
     runs-on: ubuntu-latest
+
     steps:
-      - uses: actions/checkout@v3
+      - name: Check out repo
+        uses: actions/checkout@v4
 
-      - name: Prepare folder with only load.py
+      - name: Build zip payload
         run: |
-          mkdir EDMC-LogEventMiner
-          cp load.py EDMC-LogEventMiner/
+          mkdir -p dist/EDMC-LogEventMiner
+          cp load.py dist/EDMC-LogEventMiner/
+          cd dist
+          zip -r EDMC-LogEventMiner.zip EDMC-LogEventMiner
 
-      - name: Create zip with just that folder
-        run: |
-          zip -j -r EDMC-LogEventMiner.zip EDMC-LogEventMiner
-
-      - name: Upload Release Asset
+      - name: Create GitHub Release
         uses: softprops/action-gh-release@v1
         with:
-          files: EDMC-LogEventMiner.zip
+          files: dist/EDMC-LogEventMiner.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
