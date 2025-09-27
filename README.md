@@ -37,3 +37,5 @@ TODO:
 - Take "full" off the payload label
 - Add version checking capability (and auto download?)
 - add log rotation capabilities with optiosn. 
+- add auto updating capabilities
+
