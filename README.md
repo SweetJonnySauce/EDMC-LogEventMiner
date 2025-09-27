@@ -27,3 +27,4 @@ TODO:
 - Make log file unique to profile.
 - Add button to profile on UI to add profile name to log file.
 - Take "full" off the payload label
+- Add version checking capability (and auto download?)
