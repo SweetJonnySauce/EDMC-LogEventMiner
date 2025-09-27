@@ -2,6 +2,14 @@
 
 EDMC-LogEventMiner is a lightweight [Elite Dangerous Market Connector](https://github.com/EDCD/EDMarketConnector) plugin that mirrors every incoming journal entry to its own log file while letting you exclude noisy events.
 
+## Features
+
+- Creates a dedicated journal log so you can analyse events without wading through EDMC's main log.
+- Configure include/exclude lists to isolate the events that matter for your workflow.
+- Forward entries to the EDMC log and add custom markers directly from the preferences panel.
+- Manage multiple logging “profiles”, each with its own filters and optional profile-based log filename.
+- Adjust log location on the fly and optionally append the active profile name to the log file.
+
 ## Installation
 
 1. Download or clone this repository.
