@@ -1,0 +1,25 @@
+name: Build Release
+
+on:
+  push:
+    tags:
+      - 'v*'
+
+jobs:
+  build:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v3
+
+      - name: Prepare folder
+        run: |
+          mkdir EDMC-LogEventMiner
+          cp load.py EDMC-LogEventMiner/
+
+      - name: Zip it
+        run: zip -r EDMC-LogEventMiner.zip EDMC-LogEventMiner
+
+      - name: Upload Release Asset
+        uses: softprops/action-gh-release@v1
+        with:
+          files: EDMC-LogEventMiner.zip
