@@ -11,13 +11,14 @@ jobs:
     steps:
       - uses: actions/checkout@v3
 
-      - name: Prepare folder
+      - name: Prepare folder with only load.py
         run: |
           mkdir EDMC-LogEventMiner
           cp load.py EDMC-LogEventMiner/
 
-      - name: Zip it
-        run: zip -r EDMC-LogEventMiner.zip EDMC-LogEventMiner
+      - name: Create zip with just that folder
+        run: |
+          zip -j -r EDMC-LogEventMiner.zip EDMC-LogEventMiner
 
       - name: Upload Release Asset
         uses: softprops/action-gh-release@v1
