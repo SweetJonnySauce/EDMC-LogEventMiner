@@ -8,7 +8,8 @@ This plugin is not meant to enhance youre Elite Dangerous gameplay, rather is fo
 
 - Creates a dedicated journal log so you can analyse events without wading through EDMC's main log.
 - Configure include/exclude lists to isolate the events that matter for your workflow.
-- Forward entries to the EDMC log and add custom markers directly from the preferences panel.
+- Forward entries to the EDMC log if you want them in the main log.
+- Add custom markers to the log file directly from the preferences panel.
 - Manage multiple logging “profiles”, each with its own filters and optional profile-based log filename.
 - Adjust log location on the fly and optionally append the active profile name to the log file.
 - Rotate log files automatically with configurable thresholds per profile.
