@@ -25,6 +25,7 @@ CONFIG_FILTER_MODE = f"{LOG_KEY_PREFIX}filter_mode"
 CONFIG_INCLUDE_PAYLOAD = f"{LOG_KEY_PREFIX}include_payload"
 CONFIG_PAYLOAD_LIMIT = f"{LOG_KEY_PREFIX}payload_limit"
 CONFIG_LOGGING_ENABLED = f"{LOG_KEY_PREFIX}logging_enabled"
+CONFIG_FORWARD_TO_EDMC_LOG = f"{LOG_KEY_PREFIX}forward_to_edmc_log"
 CONFIG_PROFILES = f"{LOG_KEY_PREFIX}profiles"
 CONFIG_ACTIVE_PROFILE = f"{LOG_KEY_PREFIX}active_profile"
 
@@ -45,12 +46,31 @@ if not logger.hasHandlers():
 logger.setLevel(logging.INFO)
 
 
+class _ForwardToEDMCHandler(logging.Handler):
+    """Forwards plugin log records to the native EDMC logger."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self._target = logging.getLogger(appname)
+
+    def emit(self, record: logging.LogRecord) -> None:  # pragma: no cover - side-effect only
+        try:
+            self._target.handle(record)
+        except Exception:
+            # Avoid raising if EDMC logger handling fails
+            pass
+
+
+_edmc_forward_handler: Optional[logging.Handler] = None
+
+
 class PrefsState:
     def __init__(self) -> None:
         self.ignore_widget: Optional[tk.Text] = None
         self.include_widget: Optional[tk.Text] = None
         self.mode_var: Optional[tk.StringVar] = None
         self.include_payload_var: Optional[tk.BooleanVar] = None
+        self.forward_to_edmc_var: Optional[tk.BooleanVar] = None
         self.payload_limit_var: Optional[tk.StringVar] = None
         self.logging_enabled_var: Optional[tk.BooleanVar] = None
         self.profile_var: Optional[tk.StringVar] = None
@@ -67,6 +87,7 @@ _filter_mode: str = "exclude"
 _include_payload: bool = True
 _payload_limit: Optional[int] = None
 _logging_enabled: bool = True
+_forward_to_edmc_log: bool = False
 _profiles: Dict[str, Dict[str, Any]] = {}
 _active_profile: str = DEFAULT_PROFILE_NAME
 _log_file_path: Optional[Path] = None
@@ -100,6 +121,7 @@ def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "include_payload": bool(settings.get("include_payload", True)),
         "payload_limit": settings.get("payload_limit"),
         "logging_enabled": bool(settings.get("logging_enabled", True)),
+        "forward_to_edmc_log": bool(settings.get("forward_to_edmc_log", False)),
     }
 
 
@@ -111,6 +133,7 @@ def _default_settings() -> Dict[str, Any]:
         "include_payload": True,
         "payload_limit": None,
         "logging_enabled": True,
+        "forward_to_edmc_log": False,
     }
 
 
@@ -141,6 +164,8 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
 
     logging_enabled = bool(settings.get("logging_enabled", True))
 
+    forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
+
     return {
         "ignored_events": sorted(ignored),
         "included_events": sorted(included),
@@ -148,6 +173,7 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
         "include_payload": include_payload,
         "payload_limit": payload_limit,
         "logging_enabled": logging_enabled,
+        "forward_to_edmc_log": forward_to_edmc_log,
     }
 
 
@@ -197,6 +223,20 @@ def _ensure_file_logging() -> None:
 _ensure_file_logging()
 
 
+def _sync_edmc_forwarding() -> None:
+    global _edmc_forward_handler
+    if _forward_to_edmc_log:
+        if _edmc_forward_handler is None:
+            handler = _ForwardToEDMCHandler()
+            handler.setLevel(logging.NOTSET)
+            logger.addHandler(handler)
+            _edmc_forward_handler = handler
+    else:
+        if _edmc_forward_handler is not None:
+            logger.removeHandler(_edmc_forward_handler)
+            _edmc_forward_handler = None
+
+
 def _current_log_path() -> str:
     if _log_file_path is not None:
         return str(_log_file_path)
@@ -214,11 +254,12 @@ def _get_current_settings() -> Dict[str, Any]:
         "include_payload": _include_payload,
         "payload_limit": _payload_limit,
         "logging_enabled": _logging_enabled,
+        "forward_to_edmc_log": _forward_to_edmc_log,
     }
 
 
 def _apply_settings(settings: Dict[str, Any]) -> None:
-    global _filter_mode, _include_payload, _payload_limit, _logging_enabled
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log
 
     ignored = _parse_event_list("\n".join(settings.get("ignored_events", [])))
     if not ignored:
@@ -247,6 +288,7 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     _payload_limit = payload_limit
 
     _logging_enabled = bool(settings.get("logging_enabled", True))
+    _forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
     config.set(CONFIG_IGNORE_EVENTS, _serialise_events(_ignored_events))
     config.set(CONFIG_INCLUDE_EVENTS, _serialise_events(_included_events))
@@ -254,6 +296,8 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     config.set(CONFIG_INCLUDE_PAYLOAD, _include_payload)
     config.set(CONFIG_PAYLOAD_LIMIT, "" if _payload_limit is None else str(_payload_limit))
     config.set(CONFIG_LOGGING_ENABLED, _logging_enabled)
+    config.set(CONFIG_FORWARD_TO_EDMC_LOG, _forward_to_edmc_log)
+    _sync_edmc_forwarding()
 
 
 def _populate_prefs_fields() -> None:
@@ -267,6 +311,8 @@ def _populate_prefs_fields() -> None:
         prefs_state.mode_var.set(_filter_mode)
     if prefs_state.include_payload_var is not None:
         prefs_state.include_payload_var.set(_include_payload)
+    if prefs_state.forward_to_edmc_var is not None:
+        prefs_state.forward_to_edmc_var.set(_forward_to_edmc_log)
     if prefs_state.payload_limit_var is not None:
         prefs_state.payload_limit_var.set("" if _payload_limit is None else str(_payload_limit))
     if prefs_state.logging_enabled_var is not None:
@@ -280,7 +326,7 @@ def _populate_prefs_fields() -> None:
 
 
 def _update_state_from_widgets() -> Dict[str, Any]:
-    global _filter_mode, _include_payload, _payload_limit, _logging_enabled
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log
 
     if prefs_state.ignore_widget is not None:
         raw_ignore = prefs_state.ignore_widget.get("1.0", tk.END)
@@ -328,10 +374,17 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         _include_payload = include_payload
         config.set(CONFIG_INCLUDE_PAYLOAD, include_payload)
 
+    if prefs_state.forward_to_edmc_var is not None:
+        forward_native = bool(prefs_state.forward_to_edmc_var.get())
+        _forward_to_edmc_log = forward_native
+        config.set(CONFIG_FORWARD_TO_EDMC_LOG, forward_native)
+
     if prefs_state.logging_enabled_var is not None:
         logging_enabled = bool(prefs_state.logging_enabled_var.get())
         _logging_enabled = logging_enabled
         config.set(CONFIG_LOGGING_ENABLED, logging_enabled)
+
+    _sync_edmc_forwarding()
 
     return _sanitize_settings(_get_current_settings())
 
@@ -465,11 +518,19 @@ def plugin_start3(plugin_dir: str) -> str:
         "enabled" if _include_payload else "disabled",
         " (limit %d)" % _payload_limit if _payload_limit else "",
     )
+    logger.info(
+        "Forwarding to EDMC log %s",
+        "enabled" if _forward_to_edmc_log else "disabled",
+    )
     return "TestEventLogger"
 
 
 def plugin_stop() -> None:
+    global _edmc_forward_handler
     logger.info("TestEventLogger stopped")
+    if _edmc_forward_handler is not None:
+        logger.removeHandler(_edmc_forward_handler)
+        _edmc_forward_handler = None
 
 
 def plugin_app(parent: tk.Frame) -> Optional[tk.Frame]:
@@ -506,6 +567,14 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         frame,
         text="Enable journal logging",
         variable=prefs_state.logging_enabled_var,
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 4))
+    current_row += 1
+
+    prefs_state.forward_to_edmc_var = tk.BooleanVar(value=_forward_to_edmc_log)
+    nb.Checkbutton(
+        frame,
+        text="Also send log output to EDMC log",
+        variable=prefs_state.forward_to_edmc_var,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 8))
     current_row += 1
 
