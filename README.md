@@ -1,5 +1,7 @@
 # EDMC-LogEventMiner
 
+[![Github All Releases](https://img.shields.io/github/downloads/SweetJonnySauce/EDMC-LogEventMiner/total.svg)](https://github.com/SweetJonnySauce/EDMC-LogEventMiner/releases/latest)
+
 EDMC-LogEventMiner is a lightweight [Elite Dangerous Market Connector](https://github.com/EDCD/EDMarketConnector) plugin that mirrors every incoming journal entry to its own log file while letting you exclude noisy events.
 
 This plugin is not meant to enhance youre Elite Dangerous gameplay, rather is for those that are interesting in knowing more about the journal event whether it's for curiosity or developing your own plugin. 
