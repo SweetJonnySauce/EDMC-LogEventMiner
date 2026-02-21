@@ -32,3 +32,11 @@ jobs:
         with:
           name: EDMC-LogEventMiner
           path: dist/EDMC-LogEventMiner.zip
+
+      - name: Attach zip to GitHub Release
+        if: github.event_name == 'release'
+        uses: softprops/action-gh-release@v1
+        with:
+          files: dist/EDMC-LogEventMiner.zip
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

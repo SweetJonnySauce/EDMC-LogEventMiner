@@ -1359,51 +1359,6 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     current_row += 1
     _refresh_rotation_inputs()
 
-    nb.Label(frame, text="Overlay:").grid(
-        row=current_row, column=0, sticky=tk.W, padx=10, pady=(8, 4)
-    )
-    overlay_frame = nb.Frame(frame)
-    overlay_frame.grid(row=current_row, column=1, sticky=tk.W + tk.E, padx=10, pady=(8, 4))
-    overlay_frame.columnconfigure(1, weight=1)
-
-    prefs_state.overlay_enabled_var = tk.BooleanVar(value=_overlay_enabled)
-
-    def _on_overlay_toggle() -> None:
-        _refresh_overlay_inputs()
-
-    nb.Checkbutton(
-        overlay_frame,
-        text="Enable overlay",
-        variable=prefs_state.overlay_enabled_var,
-        command=_on_overlay_toggle,
-    ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
-
-    nb.Label(overlay_frame, text="Lines:").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
-    prefs_state.overlay_lines_var = tk.StringVar(value=str(_overlay_line_count))
-    overlay_lines_entry = nb.EntryMenu(overlay_frame, textvariable=prefs_state.overlay_lines_var, width=6)
-    overlay_lines_entry.grid(row=1, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
-    prefs_state.overlay_lines_entry = overlay_lines_entry
-
-    nb.Label(overlay_frame, text="Font size:").grid(row=2, column=0, sticky=tk.W, pady=(4, 0))
-    prefs_state.overlay_font_size_var = tk.StringVar(value=_overlay_font_size)
-    overlay_size_menu = nb.OptionMenu(
-        overlay_frame,
-        prefs_state.overlay_font_size_var,
-        _overlay_font_size,
-        *OVERLAY_FONT_SIZES,
-    )
-    overlay_size_menu.grid(row=2, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
-    prefs_state.overlay_font_menu = overlay_size_menu
-
-    nb.Label(overlay_frame, text="Text color:").grid(row=3, column=0, sticky=tk.W, pady=(4, 0))
-    prefs_state.overlay_color_var = tk.StringVar(value=_overlay_color)
-    overlay_color_entry = nb.EntryMenu(overlay_frame, textvariable=prefs_state.overlay_color_var, width=12)
-    overlay_color_entry.grid(row=3, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
-    prefs_state.overlay_color_entry = overlay_color_entry
-
-    current_row += 1
-    _refresh_overlay_inputs()
-
     nb.Label(frame, text="Custom log marker:").grid(
         row=current_row, column=0, sticky=tk.W, padx=10, pady=(4, 0)
     )
@@ -1490,6 +1445,52 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 10)
     )
     current_row += 1
+
+    overlay_group = tk.LabelFrame(frame, text="Overlay")
+    overlay_group.grid(row=current_row, column=0, columnspan=2, sticky=tk.W + tk.E, padx=10, pady=(6, 10))
+    overlay_group.columnconfigure(0, weight=1)
+
+    overlay_frame = nb.Frame(overlay_group)
+    overlay_frame.grid(row=0, column=0, sticky=tk.W + tk.E, padx=8, pady=6)
+    overlay_frame.columnconfigure(1, weight=1)
+
+    prefs_state.overlay_enabled_var = tk.BooleanVar(value=_overlay_enabled)
+
+    def _on_overlay_toggle() -> None:
+        _refresh_overlay_inputs()
+
+    nb.Checkbutton(
+        overlay_frame,
+        text="Enable overlay",
+        variable=prefs_state.overlay_enabled_var,
+        command=_on_overlay_toggle,
+    ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+
+    nb.Label(overlay_frame, text="Lines:").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.overlay_lines_var = tk.StringVar(value=str(_overlay_line_count))
+    overlay_lines_entry = nb.EntryMenu(overlay_frame, textvariable=prefs_state.overlay_lines_var, width=6)
+    overlay_lines_entry.grid(row=1, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.overlay_lines_entry = overlay_lines_entry
+
+    nb.Label(overlay_frame, text="Font size:").grid(row=2, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.overlay_font_size_var = tk.StringVar(value=_overlay_font_size)
+    overlay_size_menu = nb.OptionMenu(
+        overlay_frame,
+        prefs_state.overlay_font_size_var,
+        _overlay_font_size,
+        *OVERLAY_FONT_SIZES,
+    )
+    overlay_size_menu.grid(row=2, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.overlay_font_menu = overlay_size_menu
+
+    nb.Label(overlay_frame, text="Text color:").grid(row=3, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.overlay_color_var = tk.StringVar(value=_overlay_color)
+    overlay_color_entry = nb.EntryMenu(overlay_frame, textvariable=prefs_state.overlay_color_var, width=12)
+    overlay_color_entry.grid(row=3, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.overlay_color_entry = overlay_color_entry
+
+    current_row += 1
+    _refresh_overlay_inputs()
 
     _populate_prefs_fields()
     _refresh_profile_menu()
