@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.5.0] - 2026-02-21
+- Added overlay support with animated scrolling, fade-in/out, and visual customization.
+
 ## [1.1.0] - 2026-02-21
 - Updated to enforce SemVer alignment between tags, VERSION, and CHANGELOG.
 
