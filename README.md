@@ -7,6 +7,7 @@ EDMC-LogEventMiner is a lightweight [Elite Dangerous Market Connector](https://g
 This plugin is not meant to enhance youre Elite Dangerous gameplay, rather is for those that are interesting in knowing more about the journal event whether it's for curiosity or developing your own plugin. 
 
 Display events in-game using [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay)
+
 <img width="316" height="274" alt="image" src="https://github.com/user-attachments/assets/19ffd871-a55b-48b9-80f6-fb5916d9127c" />
 
 
