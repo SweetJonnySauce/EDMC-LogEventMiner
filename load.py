@@ -1029,7 +1029,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     new_profile_frame = nb.Frame(frame)
     new_profile_frame.grid(row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 6))
     prefs_state.new_profile_var = tk.StringVar(value=_active_profile)
-    nb.Entry(new_profile_frame, textvariable=prefs_state.new_profile_var, width=20).grid(
+    nb.EntryMenu(new_profile_frame, textvariable=prefs_state.new_profile_var, width=20).grid(
         row=0, column=0, sticky=tk.W
     )
     nb.Button(new_profile_frame, text="Save profile", command=_on_create_profile).grid(
@@ -1154,7 +1154,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     nb.Label(rotation_frame, text="Max size (bytes):").grid(
         row=1, column=0, sticky=tk.W, pady=(4, 0)
     )
-    rotation_max_entry = nb.Entry(
+    rotation_max_entry = nb.EntryMenu(
         rotation_frame,
         textvariable=prefs_state.rotation_max_bytes_var,
         width=12,
@@ -1165,7 +1165,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
 
     nb.Label(rotation_frame, text="Backups:").grid(
         row=1, column=2, sticky=tk.W, padx=(16, 0), pady=(4, 0))
-    rotation_backup_entry = nb.Entry(
+    rotation_backup_entry = nb.EntryMenu(
         rotation_frame,
         textvariable=prefs_state.rotation_backup_count_var,
         width=6,
@@ -1262,7 +1262,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         row=current_row, column=0, sticky=tk.W, padx=10, pady=(0, 10)
     )
     prefs_state.payload_limit_var = tk.StringVar(value="" if _payload_limit is None else str(_payload_limit))
-    nb.Entry(frame, textvariable=prefs_state.payload_limit_var, width=10).grid(
+    nb.EntryMenu(frame, textvariable=prefs_state.payload_limit_var, width=10).grid(
         row=current_row, column=1, sticky=tk.W, padx=10, pady=(0, 10)
     )
     current_row += 1
