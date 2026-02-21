@@ -1,7 +1,7 @@
 # EDMC-LogEventMiner
 
 [![Github All Releases](https://img.shields.io/github/downloads/SweetJonnySauce/EDMC-LogEventMiner/total.svg)](https://github.com/SweetJonnySauce/EDMC-LogEventMiner/releases/latest)
-[![VirusTotal](https://img.shields.io/badge/VirusTotal-clean-brightgreen.svg)]()
+[![VirusTotal](https://img.shields.io/badge/VirusTotal-clean-brightgreen.svg)](https://www.virustotal.com/gui/url/a86d46dc81d50619493f3e2a246a0c3ba3aa676a55b3e6c03a873df317f6d3a1?nocache=1)
 
 EDMC-LogEventMiner is a lightweight [Elite Dangerous Market Connector](https://github.com/EDCD/EDMarketConnector) plugin that mirrors every incoming journal entry to its own log file while letting you exclude noisy events.
 
