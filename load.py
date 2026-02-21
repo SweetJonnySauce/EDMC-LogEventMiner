@@ -5,6 +5,7 @@ from __future__ import annotations
 import json
 import logging
 import re
+import webbrowser
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set
@@ -1464,7 +1465,20 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         text="Enable overlay",
         variable=prefs_state.overlay_enabled_var,
         command=_on_overlay_toggle,
-    ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+    ).grid(row=0, column=0, sticky=tk.W)
+
+    overlay_link = nb.Label(
+        overlay_frame,
+        text="(Get EDMCModernOverlay here)",
+        foreground="blue",
+        cursor="hand2",
+        font=("TkDefaultFont", 9, "underline"),
+    )
+    overlay_link.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+    overlay_link.bind(
+        "<Button-1>",
+        lambda _event: webbrowser.open_new_tab("https://github.com/SweetJonnySauce/EDMCModernOverlay"),
+    )
 
     nb.Label(overlay_frame, text="Lines:").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
     prefs_state.overlay_lines_var = tk.StringVar(value=str(_overlay_line_count))
