@@ -18,6 +18,11 @@ try:
 except ImportError:  # pragma: no cover
     from edmc_mocks import appname, config, nb  # type: ignore
 
+try:
+    import overlay as overlay_support
+except Exception:  # pragma: no cover - optional dependency
+    overlay_support = None  # type: ignore
+
 
 PLUGIN_DIR = Path(__file__).resolve().parent
 PLUGIN_NAME = PLUGIN_DIR.name
@@ -38,7 +43,7 @@ plugin_info = {
     "plugin_name": PLUGIN_NAME,
     "plugin_description": "Logs journal events with include/exclude filters and profiles.",
 }
-LOG_KEY_PREFIX = "testeventlogger_"
+LOG_KEY_PREFIX = "edmc-logeventminer_"
 
 CONFIG_IGNORE_EVENTS = f"{LOG_KEY_PREFIX}ignore_events"
 CONFIG_INCLUDE_EVENTS = f"{LOG_KEY_PREFIX}include_events"
@@ -53,10 +58,19 @@ CONFIG_ROTATION_MAX_BYTES = f"{LOG_KEY_PREFIX}rotation_max_bytes"
 CONFIG_ROTATION_BACKUP_COUNT = f"{LOG_KEY_PREFIX}rotation_backup_count"
 CONFIG_PROFILES = f"{LOG_KEY_PREFIX}profiles"
 CONFIG_ACTIVE_PROFILE = f"{LOG_KEY_PREFIX}active_profile"
+CONFIG_OVERLAY_ENABLED = f"{LOG_KEY_PREFIX}overlay_enabled"
+CONFIG_OVERLAY_LINES = f"{LOG_KEY_PREFIX}overlay_lines"
+CONFIG_OVERLAY_FONT_SIZE = f"{LOG_KEY_PREFIX}overlay_font_size"
+CONFIG_OVERLAY_COLOR = f"{LOG_KEY_PREFIX}overlay_color"
 
 DEFAULT_IGNORE_EVENTS = {"Music", "Fileheader"}
 DEFAULT_INCLUDE_EVENTS: Set[str] = set()
 DEFAULT_PROFILE_NAME = "Default"
+DEFAULT_OVERLAY_LINES = 10
+DEFAULT_OVERLAY_FONT_SIZE = "medium"
+DEFAULT_OVERLAY_COLOR = "orange"
+DEFAULT_OVERLAY_ENABLED = False
+OVERLAY_FONT_SIZES = ("small", "medium", "large")
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
 LOG_DATE_FORMAT = "%Y-%m-%d %H:%M:%S"
@@ -111,6 +125,13 @@ class PrefsState:
         self.profile_log_check: Optional[tk.Checkbutton] = None
         self.log_path_var: Optional[tk.StringVar] = None
         self.marker_var: Optional[tk.StringVar] = None
+        self.overlay_enabled_var: Optional[tk.BooleanVar] = None
+        self.overlay_lines_var: Optional[tk.StringVar] = None
+        self.overlay_lines_entry: Optional[tk.Entry] = None
+        self.overlay_font_size_var: Optional[tk.StringVar] = None
+        self.overlay_font_menu: Optional[tk.OptionMenu] = None
+        self.overlay_color_var: Optional[tk.StringVar] = None
+        self.overlay_color_entry: Optional[tk.Entry] = None
 
 
 prefs_state = PrefsState()
@@ -129,6 +150,10 @@ _custom_log_path: Optional[Path] = None
 _profiles: Dict[str, Dict[str, Any]] = {}
 _active_profile: str = DEFAULT_PROFILE_NAME
 _log_file_path: Optional[Path] = None
+_overlay_enabled: bool = DEFAULT_OVERLAY_ENABLED
+_overlay_line_count: int = DEFAULT_OVERLAY_LINES
+_overlay_font_size: str = DEFAULT_OVERLAY_FONT_SIZE
+_overlay_color: str = DEFAULT_OVERLAY_COLOR
 
 
 # ---------------------------------------------------------------------------
@@ -149,6 +174,43 @@ def _parse_event_list(raw: str) -> Set[str]:
 
 def _serialise_events(events: Iterable[str]) -> str:
     return "\n".join(sorted(_normalise_event_names(events)))
+
+
+def _config_missing(key: str) -> bool:
+    try:
+        raw = config.get_str(key)
+    except Exception:
+        return True
+    return raw is None or raw == ""
+
+
+def _ensure_config_defaults() -> None:
+    defaults = _default_settings()
+    default_map = {
+        CONFIG_IGNORE_EVENTS: _serialise_events(DEFAULT_IGNORE_EVENTS),
+        CONFIG_INCLUDE_EVENTS: _serialise_events(DEFAULT_INCLUDE_EVENTS),
+        CONFIG_FILTER_MODE: defaults["filter_mode"],
+        CONFIG_INCLUDE_PAYLOAD: defaults["include_payload"],
+        CONFIG_PAYLOAD_LIMIT: "",
+        CONFIG_LOGGING_ENABLED: defaults["logging_enabled"],
+        CONFIG_FORWARD_TO_EDMC_LOG: defaults["forward_to_edmc_log"],
+        CONFIG_LOG_FILE_PATH: "",
+        CONFIG_ROTATION_ENABLED: defaults["rotation_enabled"],
+        CONFIG_ROTATION_MAX_BYTES: str(defaults["rotation_max_bytes"]),
+        CONFIG_ROTATION_BACKUP_COUNT: str(defaults["rotation_backup_count"]),
+        CONFIG_OVERLAY_ENABLED: DEFAULT_OVERLAY_ENABLED,
+        CONFIG_OVERLAY_LINES: str(DEFAULT_OVERLAY_LINES),
+        CONFIG_OVERLAY_FONT_SIZE: DEFAULT_OVERLAY_FONT_SIZE,
+        CONFIG_OVERLAY_COLOR: DEFAULT_OVERLAY_COLOR,
+    }
+
+    for key, value in default_map.items():
+        if _config_missing(key):
+            try:
+                config.set(key, value)
+            except Exception:
+                pass
+
 
 
 def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
@@ -257,6 +319,53 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
         "rotation_max_bytes": rotation_max_bytes,
         "rotation_backup_count": rotation_backup_count,
     }
+
+
+def _parse_bool_value(raw: Optional[str], default: bool) -> bool:
+    if raw is None:
+        return default
+    if isinstance(raw, bool):
+        return raw
+    text = str(raw).strip().lower()
+    if text in {"1", "true", "yes", "y", "on"}:
+        return True
+    if text in {"0", "false", "no", "n", "off"}:
+        return False
+    return default
+
+
+def _load_overlay_settings() -> None:
+    global _overlay_enabled, _overlay_line_count, _overlay_font_size, _overlay_color
+
+    _overlay_enabled = _parse_bool_value(
+        config.get_str(CONFIG_OVERLAY_ENABLED),
+        DEFAULT_OVERLAY_ENABLED,
+    )
+
+    raw_lines = config.get_str(CONFIG_OVERLAY_LINES)
+    try:
+        parsed_lines = int(str(raw_lines).strip())
+    except (TypeError, ValueError):
+        parsed_lines = DEFAULT_OVERLAY_LINES
+    if parsed_lines < 1:
+        parsed_lines = DEFAULT_OVERLAY_LINES
+    _overlay_line_count = parsed_lines
+
+    raw_size = (config.get_str(CONFIG_OVERLAY_FONT_SIZE) or "").strip().lower()
+    if raw_size not in OVERLAY_FONT_SIZES:
+        raw_size = DEFAULT_OVERLAY_FONT_SIZE
+    _overlay_font_size = raw_size
+
+    raw_color = (config.get_str(CONFIG_OVERLAY_COLOR) or "").strip()
+    _overlay_color = raw_color or DEFAULT_OVERLAY_COLOR
+
+    if overlay_support is not None:
+        overlay_support.configure(
+            _overlay_enabled,
+            _overlay_line_count,
+            _overlay_font_size,
+            _overlay_color,
+        )
 
 
 def _default_log_file() -> Path:
@@ -562,6 +671,19 @@ def _refresh_rotation_inputs() -> None:
         prefs_state.rotation_backup_count_entry.config(state=state)
 
 
+def _refresh_overlay_inputs() -> None:
+    if prefs_state.overlay_enabled_var is None:
+        return
+    enabled = bool(prefs_state.overlay_enabled_var.get())
+    state = tk.NORMAL if enabled else tk.DISABLED
+    if prefs_state.overlay_lines_entry is not None:
+        prefs_state.overlay_lines_entry.config(state=state)
+    if prefs_state.overlay_font_menu is not None:
+        prefs_state.overlay_font_menu.config(state=state)
+    if prefs_state.overlay_color_entry is not None:
+        prefs_state.overlay_color_entry.config(state=state)
+
+
 def _get_current_settings() -> Dict[str, Any]:
     return {
         "ignored_events": sorted(_ignored_events),
@@ -695,12 +817,22 @@ def _populate_prefs_fields() -> None:
         prefs_state.rotation_max_bytes_var.set(str(_log_rotation_max_bytes))
     if prefs_state.rotation_backup_count_var is not None:
         prefs_state.rotation_backup_count_var.set(str(_log_rotation_backup_count))
+    if prefs_state.overlay_enabled_var is not None:
+        prefs_state.overlay_enabled_var.set(_overlay_enabled)
+    if prefs_state.overlay_lines_var is not None:
+        prefs_state.overlay_lines_var.set(str(_overlay_line_count))
+    if prefs_state.overlay_font_size_var is not None:
+        prefs_state.overlay_font_size_var.set(_overlay_font_size)
+    if prefs_state.overlay_color_var is not None:
+        prefs_state.overlay_color_var.set(_overlay_color)
+    _refresh_overlay_inputs()
     _refresh_rotation_inputs()
 
 
 def _update_state_from_widgets() -> Dict[str, Any]:
     global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
     global _log_rotation_enabled, _log_rotation_max_bytes, _log_rotation_backup_count
+    global _overlay_enabled, _overlay_line_count, _overlay_font_size, _overlay_color
 
     if prefs_state.ignore_widget is not None:
         raw_ignore = prefs_state.ignore_widget.get("1.0", tk.END)
@@ -790,8 +922,42 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         prefs_state.rotation_backup_count_var.set(str(parsed_backups))
         config.set(CONFIG_ROTATION_BACKUP_COUNT, str(parsed_backups))
 
+    if prefs_state.overlay_enabled_var is not None:
+        overlay_enabled = bool(prefs_state.overlay_enabled_var.get())
+        _overlay_enabled = overlay_enabled
+        config.set(CONFIG_OVERLAY_ENABLED, overlay_enabled)
+
+    if prefs_state.overlay_lines_var is not None:
+        raw_lines = (prefs_state.overlay_lines_var.get() or "").strip()
+        try:
+            parsed_lines = int(raw_lines)
+        except ValueError:
+            parsed_lines = DEFAULT_OVERLAY_LINES
+        if parsed_lines < 1:
+            parsed_lines = DEFAULT_OVERLAY_LINES
+        _overlay_line_count = parsed_lines
+        prefs_state.overlay_lines_var.set(str(parsed_lines))
+        config.set(CONFIG_OVERLAY_LINES, str(parsed_lines))
+
+    if prefs_state.overlay_font_size_var is not None:
+        size_value = (prefs_state.overlay_font_size_var.get() or "").strip().lower()
+        if size_value not in OVERLAY_FONT_SIZES:
+            size_value = DEFAULT_OVERLAY_FONT_SIZE
+        _overlay_font_size = size_value
+        prefs_state.overlay_font_size_var.set(size_value)
+        config.set(CONFIG_OVERLAY_FONT_SIZE, size_value)
+
+    if prefs_state.overlay_color_var is not None:
+        color_value = (prefs_state.overlay_color_var.get() or "").strip()
+        if not color_value:
+            color_value = DEFAULT_OVERLAY_COLOR
+        _overlay_color = color_value
+        prefs_state.overlay_color_var.set(color_value)
+        config.set(CONFIG_OVERLAY_COLOR, color_value)
+
     _ensure_file_logging()
     _refresh_rotation_inputs()
+    _refresh_overlay_inputs()
     if prefs_state.profile_log_var is not None:
         desired_enabled = bool(prefs_state.profile_log_var.get())
         if desired_enabled != _current_profile_suffix_enabled(_active_profile):
@@ -800,6 +966,13 @@ def _update_state_from_widgets() -> Dict[str, Any]:
             _update_profile_log_controls()
 
     _sync_edmc_forwarding()
+    if overlay_support is not None:
+        overlay_support.configure(
+            _overlay_enabled,
+            _overlay_line_count,
+            _overlay_font_size,
+            _overlay_color,
+        )
 
     return _sanitize_settings(_get_current_settings())
 
@@ -913,7 +1086,11 @@ def _current_payload_limit() -> Optional[int]:
 # EDMC plugin hooks
 # ---------------------------------------------------------------------------
 def plugin_start3(plugin_dir: str) -> str:
+    if overlay_support is not None:
+        overlay_support.init(PLUGIN_NAME, logger)
+    _ensure_config_defaults()
     _load_profiles()
+    _load_overlay_settings()
     logger.info("Running %s version %s", PLUGIN_NAME, PLUGIN_VERSION)
     logger.info(
         "Initialised %s with profile '%s' (ignored %d events)",
@@ -938,6 +1115,8 @@ def plugin_start3(plugin_dir: str) -> str:
 def plugin_stop() -> None:
     global _edmc_forward_handler
     logger.info("%s stopped", PLUGIN_NAME)
+    if overlay_support is not None:
+        overlay_support.shutdown()
     if _edmc_forward_handler is not None:
         logger.removeHandler(_edmc_forward_handler)
         _edmc_forward_handler = None
@@ -1180,6 +1359,51 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     current_row += 1
     _refresh_rotation_inputs()
 
+    nb.Label(frame, text="Overlay:").grid(
+        row=current_row, column=0, sticky=tk.W, padx=10, pady=(8, 4)
+    )
+    overlay_frame = nb.Frame(frame)
+    overlay_frame.grid(row=current_row, column=1, sticky=tk.W + tk.E, padx=10, pady=(8, 4))
+    overlay_frame.columnconfigure(1, weight=1)
+
+    prefs_state.overlay_enabled_var = tk.BooleanVar(value=_overlay_enabled)
+
+    def _on_overlay_toggle() -> None:
+        _refresh_overlay_inputs()
+
+    nb.Checkbutton(
+        overlay_frame,
+        text="Enable overlay",
+        variable=prefs_state.overlay_enabled_var,
+        command=_on_overlay_toggle,
+    ).grid(row=0, column=0, columnspan=2, sticky=tk.W)
+
+    nb.Label(overlay_frame, text="Lines:").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.overlay_lines_var = tk.StringVar(value=str(_overlay_line_count))
+    overlay_lines_entry = nb.EntryMenu(overlay_frame, textvariable=prefs_state.overlay_lines_var, width=6)
+    overlay_lines_entry.grid(row=1, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.overlay_lines_entry = overlay_lines_entry
+
+    nb.Label(overlay_frame, text="Font size:").grid(row=2, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.overlay_font_size_var = tk.StringVar(value=_overlay_font_size)
+    overlay_size_menu = nb.OptionMenu(
+        overlay_frame,
+        prefs_state.overlay_font_size_var,
+        _overlay_font_size,
+        *OVERLAY_FONT_SIZES,
+    )
+    overlay_size_menu.grid(row=2, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.overlay_font_menu = overlay_size_menu
+
+    nb.Label(overlay_frame, text="Text color:").grid(row=3, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.overlay_color_var = tk.StringVar(value=_overlay_color)
+    overlay_color_entry = nb.EntryMenu(overlay_frame, textvariable=prefs_state.overlay_color_var, width=12)
+    overlay_color_entry.grid(row=3, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.overlay_color_entry = overlay_color_entry
+
+    current_row += 1
+    _refresh_overlay_inputs()
+
     nb.Label(frame, text="Custom log marker:").grid(
         row=current_row, column=0, sticky=tk.W, padx=10, pady=(4, 0)
     )
@@ -1299,6 +1523,9 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
     else:
         if event_name in _ignored_events:
             return
+
+    if overlay_support is not None:
+        overlay_support.push_event(event_name, entry.get("timestamp"))
 
     payload = None
     if _include_payload:
