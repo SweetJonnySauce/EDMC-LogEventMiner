@@ -45,6 +45,7 @@ _ANCHOR_OFFSET_X = _BASE_X
 _ANCHOR_OFFSET_Y = _BASE_Y
 _COLOR_CACHE: dict[str, Optional[tuple[int, int, int]]] = {}
 _COLOR_ROOT = None
+_LOG_PREFIX = "[overlay]"
 
 
 @dataclass
@@ -89,14 +90,29 @@ class OverlayManager:
         self._trim_after_animation = False
         self._last_rendered = 0
         self._group_registered = False
+        self._missing_backend_logged = False
+        self._disabled_skip_logged = False
         self._redraw_stop = threading.Event()
         self._redraw_thread = threading.Thread(target=self._redraw_loop, daemon=True)
         self._redraw_thread.start()
         safe_prefix = plugin_name.lower().replace(" ", "").replace("-", "")
         self._id_prefix = f"{safe_prefix}-overlay-"
+        self._debug(
+            "manager created (id_prefix=%s, group_api=%s, backend=%s)",
+            self._id_prefix,
+            "available" if define_plugin_group is not None else "missing",
+            "available" if edmcoverlay is not None else "missing",
+        )
+
+    def _debug(self, message: str, *args) -> None:
+        self._logger.debug(f"[{self._plugin_name}] {_LOG_PREFIX} {message}", *args)
 
     def register_group(self) -> None:
-        if self._group_registered or define_plugin_group is None:
+        if self._group_registered:
+            self._debug("plugin group already registered.")
+            return
+        if define_plugin_group is None:
+            self._debug("plugin group API unavailable; using legacy absolute coordinates.")
             return
         try:
             define_plugin_group(
@@ -111,12 +127,20 @@ class OverlayManager:
                 background_border_width=5,
             )
             self._group_registered = True
+            self._debug("plugin group registered (group=%s, prefix=%s)", self._plugin_name, self._id_prefix)
         except PluginGroupingError as exc:  # pragma: no cover - runtime specific
-            self._logger.debug("Overlay plugin group registration failed: %s", exc)
+            self._debug("plugin group registration failed: %s", exc)
         except Exception as exc:  # pragma: no cover - defensive guard
-            self._logger.debug("Overlay plugin group registration error: %s", exc)
+            self._debug("plugin group registration error: %s", exc)
 
     def configure(self, *, enabled: bool, max_lines: int, font_size: str, color: str) -> None:
+        self._debug(
+            "configure requested: enabled=%s lines=%s font=%s color=%s",
+            enabled,
+            max_lines,
+            font_size,
+            color,
+        )
         with self._lock:
             self._config.enabled = bool(enabled)
             self._config.max_lines = max(1, int(max_lines))
@@ -124,10 +148,19 @@ class OverlayManager:
             self._config.color = _normalise_color(color, self._config.color)
             self._config.color_rgb = _color_to_rgb(self._config.color)
 
+        self._debug(
+            "configure resolved: enabled=%s lines=%s font=%s color=%s",
+            self._config.enabled,
+            self._config.max_lines,
+            self._config.font_size,
+            self._config.color,
+        )
         if not self._config.enabled:
+            self._debug("overlay disabled; clearing rendered lines.")
             self.clear()
             return
 
+        self._disabled_skip_logged = False
         self.register_group()
         with self._lock:
             if self._lines:
@@ -144,11 +177,16 @@ class OverlayManager:
             self._trim_after_animation = False
             positions = list(self._current_positions)
         self._render_with_positions(positions)
+        self._debug("configured and rendered with %d retained lines.", len(self._lines))
 
     def push_event(self, event_name: str, timestamp: Optional[str]) -> None:
         if not self._config.enabled:
+            if not self._disabled_skip_logged:
+                self._debug("push_event skipped while overlay disabled.")
+                self._disabled_skip_logged = True
             return
         if not event_name:
+            self._debug("push_event skipped because event_name is empty.")
             return
 
         with self._lock:
@@ -192,10 +230,23 @@ class OverlayManager:
                 positions = list(self._current_positions)
             else:
                 positions = list(self._current_positions or self._compute_target_positions())
+            line_count = len(self._lines)
+            trim_after = self._trim_after_animation
+            animating = self._animating
+        self._debug(
+            "accepted event=%s appended=%s lines=%d trim_after=%s animating=%s",
+            event_name,
+            appended,
+            line_count,
+            trim_after,
+            animating,
+        )
         self._render_with_positions(positions)
 
     def clear(self) -> None:
+        cleared_count = 0
         with self._lock:
+            cleared_count = len(self._lines)
             self._lines.clear()
             self._current_positions = []
             self._target_positions = []
@@ -207,11 +258,12 @@ class OverlayManager:
             self._fade_out_step = 0
             self._fade_out_steps_total = 0
             self._trim_after_animation = False
+        self._debug("clear requested; removed %d lines.", cleared_count)
         if not self._ensure_overlay():
             self._last_rendered = 0
             return
         for index in range(self._last_rendered):
-            self._overlay.send_message(
+            self._send_message(
                 f"{self._id_prefix}line-{index}",
                 "",
                 self._config.color,
@@ -223,6 +275,7 @@ class OverlayManager:
         self._last_rendered = 0
 
     def shutdown(self) -> None:
+        self._debug("shutdown requested.")
         self.clear()
         self._redraw_stop.set()
         self._overlay = None
@@ -231,17 +284,64 @@ class OverlayManager:
         if self._overlay is not None:
             return True
         if edmcoverlay is None:
+            if not self._missing_backend_logged:
+                self._logger.warning(
+                    "[%s] %s EDMCOverlay backend module unavailable; overlay events cannot be sent.",
+                    self._plugin_name,
+                    _LOG_PREFIX,
+                )
+                self._missing_backend_logged = True
             return False
         try:
             self._overlay = edmcoverlay.Overlay()
+            self._missing_backend_logged = False
+            self._debug("overlay client initialised successfully.")
             return True
         except Exception as exc:  # pragma: no cover - runtime specific
-            self._logger.debug("Failed to initialise overlay client: %s", exc)
+            self._logger.warning(
+                "[%s] %s failed to initialise overlay client: %s",
+                self._plugin_name,
+                _LOG_PREFIX,
+                exc,
+            )
             self._overlay = None
+            return False
+
+    def _send_message(
+        self,
+        message_id: str,
+        text: str,
+        color: str,
+        x_pos: int,
+        y_pos: int,
+        *,
+        ttl: int,
+        size: str,
+    ) -> bool:
+        try:
+            self._overlay.send_message(
+                message_id,
+                text,
+                color,
+                x_pos,
+                y_pos,
+                ttl=ttl,
+                size=size,
+            )
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "[%s] %s send_message failed id=%s error=%s",
+                self._plugin_name,
+                _LOG_PREFIX,
+                message_id,
+                exc,
+            )
             return False
 
     def _render_with_positions(self, positions: list[int]) -> None:
         if not self._ensure_overlay():
+            self._debug("render skipped because overlay client is unavailable.")
             return
         with self._lock:
             size_token = _OVERLAY_SIZE_MAP[self._config.font_size]
@@ -256,6 +356,12 @@ class OverlayManager:
             entries = [entry.format() for entry in self._lines]
             x_pos = 0 if self._group_registered else _BASE_X
 
+        self._debug(
+            "rendering lines=%d size=%s group_registered=%s",
+            len(entries),
+            size_token,
+            self._group_registered,
+        )
         fade_alpha = None
         if fade_index is not None and fade_total > 0:
             fade_alpha = int(round(100 * min(fade_step, fade_total) / fade_total))
@@ -271,7 +377,7 @@ class OverlayManager:
                     line_color = _format_color_with_alpha(color_rgb, fade_out_alpha)
                 elif fade_alpha is not None and index == fade_index and fade_alpha < 100:
                     line_color = _format_color_with_alpha(color_rgb, fade_alpha)
-            self._overlay.send_message(
+            self._send_message(
                 f"{self._id_prefix}line-{index}",
                 text,
                 line_color,
@@ -283,7 +389,7 @@ class OverlayManager:
 
         previous = self._last_rendered
         for index in range(len(self._lines), previous):
-            self._overlay.send_message(
+            self._send_message(
                 f"{self._id_prefix}line-{index}",
                 "",
                 self._config.color,
@@ -293,6 +399,7 @@ class OverlayManager:
                 size=size_token,
             )
         self._last_rendered = len(self._lines)
+        self._debug("render complete lines=%d cleared=%d", len(self._lines), max(previous - len(self._lines), 0))
 
     def _compute_target_positions(self) -> list[int]:
         line_height = _LINE_HEIGHT[self._config.font_size]
@@ -385,11 +492,22 @@ def init(plugin_name: str, logger: logging.Logger) -> None:
     global _manager
     if _manager is None:
         _manager = OverlayManager(plugin_name, logger)
+        logger.debug("[%s] %s init created overlay manager.", plugin_name, _LOG_PREFIX)
+    else:
+        logger.debug("[%s] %s init reusing existing overlay manager.", plugin_name, _LOG_PREFIX)
     _manager.register_group()
 
 
 def configure(enabled: bool, max_lines: int, font_size: str, color: str) -> None:
     if _manager is None:
+        logging.getLogger().debug(
+            "%s configure requested before init; dropping request enabled=%s lines=%s font=%s color=%s",
+            _LOG_PREFIX,
+            enabled,
+            max_lines,
+            font_size,
+            color,
+        )
         return
     _manager.configure(
         enabled=enabled,
@@ -401,12 +519,18 @@ def configure(enabled: bool, max_lines: int, font_size: str, color: str) -> None
 
 def push_event(event_name: str, timestamp: Optional[str]) -> None:
     if _manager is None:
+        logging.getLogger().debug(
+            "%s push_event requested before init; dropping event=%s",
+            _LOG_PREFIX,
+            event_name,
+        )
         return
     _manager.push_event(event_name, timestamp)
 
 
 def shutdown() -> None:
     if _manager is None:
+        logging.getLogger().debug("%s shutdown requested before init; nothing to do.", _LOG_PREFIX)
         return
     _manager.shutdown()
 

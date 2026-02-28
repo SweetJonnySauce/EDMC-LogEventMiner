@@ -82,9 +82,18 @@ logger = logging.getLogger(f"{appname}.{PLUGIN_NAME}")
 if not logger.hasHandlers():
     handler = logging.StreamHandler()
     handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+    handler.setLevel(logging.INFO)
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 logger.propagate = False
+
+
+def _debug(message: str, *args: Any) -> None:
+    """Emit plugin diagnostics through EDMC's logger and level controls."""
+
+    # Route diagnostics through EDMC's main logger so they always obey
+    # EDMC's configured log level and appear in EDMarketConnector-debug.log.
+    logging.getLogger(appname).debug(f"[{PLUGIN_NAME}] {message}", *args)
 
 
 class _ForwardToEDMCHandler(logging.Handler):
@@ -361,12 +370,43 @@ def _load_overlay_settings() -> None:
     _overlay_color = raw_color or DEFAULT_OVERLAY_COLOR
 
     if overlay_support is not None:
+        _debug(
+            "Applying overlay settings: enabled=%s lines=%d font=%s color=%s",
+            _overlay_enabled,
+            _overlay_line_count,
+            _overlay_font_size,
+            _overlay_color,
+        )
         overlay_support.configure(
             _overlay_enabled,
             _overlay_line_count,
             _overlay_font_size,
             _overlay_color,
         )
+    else:
+        _debug(
+            "Overlay support module unavailable; loaded settings enabled=%s lines=%d font=%s color=%s",
+            _overlay_enabled,
+            _overlay_line_count,
+            _overlay_font_size,
+            _overlay_color,
+        )
+
+
+def _emit_overlay_started(reason: str) -> None:
+    """Send a synthetic overlay event so overlay delivery can be verified quickly."""
+
+    if overlay_support is None:
+        _debug('OverlayStarted not sent (%s): overlay support unavailable.', reason)
+        return
+    if not _overlay_enabled:
+        _debug('OverlayStarted not sent (%s): overlay disabled.', reason)
+        return
+    try:
+        overlay_support.push_event("OverlayStarted", None)
+        _debug('Sent synthetic overlay event "OverlayStarted" (%s).', reason)
+    except Exception as exc:  # pragma: no cover - defensive guard
+        logger.warning('Failed to send synthetic overlay event "OverlayStarted": %s', exc)
 
 
 def _default_log_file() -> Path:
@@ -468,10 +508,11 @@ def _ensure_file_logging() -> None:
         else:
             handler = logging.FileHandler(desired_path, encoding="utf-8")
         handler.setFormatter(logging.Formatter(LOG_FORMAT, LOG_DATE_FORMAT))
+        handler.setLevel(logging.INFO)
         setattr(handler, FILE_HANDLER_FLAG, True)
         logger.addHandler(handler)
         _log_file_path = desired_path
-        logger.debug("File logging initialised at %s", desired_path)
+        _debug("File logging initialised at %s", desired_path)
         if previous_path is None or previous_path != desired_path:
             logger.info("Log file path changed to %s", desired_path)
     except Exception as exc:  # pragma: no cover
@@ -495,10 +536,12 @@ def _sync_edmc_forwarding() -> None:
             handler.setLevel(logging.NOTSET)
             logger.addHandler(handler)
             _edmc_forward_handler = handler
+            _debug("Journal event forwarding to EDMC log enabled.")
     else:
         if _edmc_forward_handler is not None:
             logger.removeHandler(_edmc_forward_handler)
             _edmc_forward_handler = None
+            _debug("Journal event forwarding to EDMC log disabled.")
 
 
 def _log_marker(message: str) -> None:
@@ -545,6 +588,7 @@ def _apply_log_path_value(raw_path: Optional[str]) -> None:
 
     config.set(CONFIG_LOG_FILE_PATH, str(_custom_log_path) if _custom_log_path else "")
     _ensure_file_logging()
+    _debug("Configured journal log file path: %s", _current_log_path())
     _update_profile_log_controls()
 
 
@@ -559,6 +603,7 @@ def _apply_forward_to_edmc_value(raw_value: Optional[bool]) -> None:
     config.set(CONFIG_FORWARD_TO_EDMC_LOG, forward_native)
     if forward_native != previous:
         _sync_edmc_forwarding()
+        _debug("Forward-to-EDMC setting changed to %s", "enabled" if forward_native else "disabled")
 
 
 def _sanitise_profile_suffix(name: str) -> str:
@@ -835,6 +880,8 @@ def _update_state_from_widgets() -> Dict[str, Any]:
     global _log_rotation_enabled, _log_rotation_max_bytes, _log_rotation_backup_count
     global _overlay_enabled, _overlay_line_count, _overlay_font_size, _overlay_color
 
+    overlay_was_enabled = _overlay_enabled
+
     if prefs_state.ignore_widget is not None:
         raw_ignore = prefs_state.ignore_widget.get("1.0", tk.END)
         ignore_events = _parse_event_list(raw_ignore)
@@ -974,6 +1021,8 @@ def _update_state_from_widgets() -> Dict[str, Any]:
             _overlay_font_size,
             _overlay_color,
         )
+    if _overlay_enabled and not overlay_was_enabled:
+        _emit_overlay_started("prefs-enabled")
 
     return _sanitize_settings(_get_current_settings())
 
@@ -1088,10 +1137,14 @@ def _current_payload_limit() -> Optional[int]:
 # ---------------------------------------------------------------------------
 def plugin_start3(plugin_dir: str) -> str:
     if overlay_support is not None:
-        overlay_support.init(PLUGIN_NAME, logger)
+        overlay_support.init(PLUGIN_NAME, logging.getLogger(appname))
+        _debug("Overlay support initialised.")
+    else:
+        _debug("Overlay support module not loaded; overlay events will be skipped.")
     _ensure_config_defaults()
     _load_profiles()
     _load_overlay_settings()
+    _emit_overlay_started("startup")
     logger.info("Running %s version %s", PLUGIN_NAME, PLUGIN_VERSION)
     logger.info(
         "Initialised %s with profile '%s' (ignored %d events)",
@@ -1110,6 +1163,17 @@ def plugin_start3(plugin_dir: str) -> str:
         "enabled" if _forward_to_edmc_log else "disabled",
     )
     logger.info("Log file path: %s", _current_log_path())
+    _debug(
+        "Startup settings profile=%s mode=%s ignored=%d included=%d payload=%s limit=%s journal_logging=%s overlay=%s",
+        _active_profile,
+        _filter_mode,
+        len(_ignored_events),
+        len(_included_events),
+        _include_payload,
+        _payload_limit if _payload_limit is not None else "none",
+        _logging_enabled,
+        _overlay_enabled,
+    )
     return PLUGIN_NAME
 
 
@@ -1518,28 +1582,43 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
     _save_profiles()
     _refresh_profile_menu()
     _populate_prefs_fields()
+    _debug(
+        "Preferences updated profile=%s mode=%s ignored=%d included=%d payload=%s limit=%s journal_logging=%s forward_to_edmc=%s",
+        _active_profile,
+        settings_snapshot.get("filter_mode"),
+        len(settings_snapshot.get("ignored_events", [])),
+        len(settings_snapshot.get("included_events", [])),
+        settings_snapshot.get("include_payload"),
+        settings_snapshot.get("payload_limit"),
+        settings_snapshot.get("logging_enabled"),
+        settings_snapshot.get("forward_to_edmc_log"),
+    )
 
 
 def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
     if not _logging_enabled:
+        _debug("Journal logging disabled; skipping event processing.")
         return
 
     event_name = entry.get("event")
     if not event_name:
-        logger.debug("Journal entry missing event field: %s", entry)
+        _debug("Journal entry missing event field: %s", entry)
         return
 
     if _filter_mode == "include":
         if _included_events and event_name not in _included_events:
+            _debug("Skipping event %s because it is not in the include list.", event_name)
             return
         if not _included_events:
-            logger.debug("Include-only mode set but no events defined; skipping %s", event_name)
+            _debug("Include-only mode set but no events defined; skipping %s", event_name)
             return
     else:
         if event_name in _ignored_events:
+            _debug("Skipping event %s because it is in the ignore list.", event_name)
             return
 
     if overlay_support is not None:
+        _debug("Queueing overlay event: %s (timestamp=%s)", event_name, entry.get("timestamp"))
         overlay_support.push_event(event_name, entry.get("timestamp"))
 
     payload = None
@@ -1554,7 +1633,7 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
                 payload = payload[: _payload_limit - 3] + "..."
             else:
                 payload = payload[: _payload_limit]
-            logger.debug("Payload truncated to %d chars for %s", _payload_limit, event_name)
+            _debug("Payload truncated to %d chars for %s", _payload_limit, event_name)
 
     if payload is not None:
         logger.info("Journal event %s: %s", event_name, payload)
