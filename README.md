@@ -23,7 +23,7 @@ Display events in-game using [EDMCModernOverlay](https://github.com/SweetJonnySa
 - Rotate log files automatically with configurable thresholds per profile.
 - Overlay support using [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay)
 - Optional status-change logging sourced from EDMC `dashboard_entry()` updates.
-- Dedicated `Status` settings tab with per-status tracking checkboxes, profile-scoped settings, and status overlay controls.
+- Dedicated `Status` settings tab with per-status tracking checkboxes (including all `GuiFocus*` constants), profile-scoped settings, and status overlay controls.
 - Separate status overlay group that renders current tracked status values (including mapped + raw `GuiFocus`).
 
 ## Installation

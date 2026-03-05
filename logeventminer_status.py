@@ -85,6 +85,8 @@ _GUI_FOCUS_SUFFIXES = (
     "Codex",
 )
 
+_GUI_FOCUS_CONSTANT_NAMES = tuple(f"GuiFocus{suffix}" for suffix in _GUI_FOCUS_SUFFIXES)
+
 
 def _constant_int(name: str, fallback: int) -> int:
     value = getattr(edmc_data, name, fallback)
@@ -109,10 +111,16 @@ GUI_FOCUS_VALUE_TO_NAME: dict[int, str] = {
     for index, suffix in enumerate(_GUI_FOCUS_SUFFIXES)
 }
 
+STATUS_GUI_FOCUS_MATCH_VALUES: dict[str, int] = {
+    name: _constant_int(name, index)
+    for index, name in enumerate(_GUI_FOCUS_CONSTANT_NAMES)
+}
+
 STATUS_FIELD_ORDER: tuple[str, ...] = (
     *(f"Flags.{suffix}" for suffix in _FLAGS_SUFFIXES),
     *(f"Flags2.{suffix}" for suffix in _FLAGS2_SUFFIXES),
     "GuiFocus",
+    *_GUI_FOCUS_CONSTANT_NAMES,
 )
 
 
@@ -169,6 +177,8 @@ def decode_status_snapshot(entry: Mapping[str, Any]) -> dict[str, Any]:
             snapshot[name] = bool(flags & STATUS_FLAG_MASKS[name])
         elif name.startswith("Flags2."):
             snapshot[name] = bool(flags2 & STATUS_FLAG2_MASKS[name])
+        elif name in STATUS_GUI_FOCUS_MATCH_VALUES:
+            snapshot[name] = gui_focus == STATUS_GUI_FOCUS_MATCH_VALUES[name]
         else:
             snapshot[name] = gui_focus
     return snapshot

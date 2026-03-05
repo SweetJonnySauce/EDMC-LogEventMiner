@@ -3,6 +3,7 @@
 ## [1.6.0] - 2026-03-04
 - Added dashboard-driven status tracking with tracked-only status change logging.
 - Added a dedicated `Status` preferences tab with one checkbox per status (`checked = track`, `unchecked = ignore`).
+- Expanded `GuiFocus` tracking to include all dashboard constants (`GuiFocusNoFocus` through `GuiFocusCodex`) as individual status checkboxes.
 - Added profile-scoped status settings, including status logging toggle and status overlay settings.
 - Added a separate status overlay plugin group that renders current tracked status values.
 

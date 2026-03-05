@@ -17,11 +17,15 @@ def test_status_field_inventory_contains_expected_groups() -> None:
     assert "Flags.Docked" in STATUS_FIELD_ORDER
     assert "Flags2.OnFoot" in STATUS_FIELD_ORDER
     assert "GuiFocus" in STATUS_FIELD_ORDER
+    assert "GuiFocusNoFocus" in STATUS_FIELD_ORDER
+    assert "GuiFocusCodex" in STATUS_FIELD_ORDER
 
 
 def test_normalize_tracked_statuses_filters_unknown_values() -> None:
-    tracked = normalize_tracked_statuses(["Flags.Docked", "GuiFocus", "Unknown", ""])
-    assert tracked == {"Flags.Docked", "GuiFocus"}
+    tracked = normalize_tracked_statuses(
+        ["Flags.Docked", "GuiFocus", "GuiFocusGalaxyMap", "Unknown", ""]
+    )
+    assert tracked == {"Flags.Docked", "GuiFocus", "GuiFocusGalaxyMap"}
 
 
 def test_decode_status_snapshot_uses_flags_flags2_and_guifocus() -> None:
@@ -40,18 +44,33 @@ def test_decode_status_snapshot_uses_flags_flags2_and_guifocus() -> None:
     assert snapshot["Flags2.LowHealth"] is True
     assert snapshot["Flags2.Hot"] is False
     assert snapshot["GuiFocus"] == 6
+    assert snapshot["GuiFocusGalaxyMap"] is True
+    assert snapshot["GuiFocusNoFocus"] is False
 
 
 def test_diff_status_snapshots_filters_to_tracked_names() -> None:
-    previous = {"Flags.Docked": False, "Flags.Landed": False, "GuiFocus": 0}
-    current = {"Flags.Docked": True, "Flags.Landed": False, "GuiFocus": 6}
+    previous = {
+        "Flags.Docked": False,
+        "Flags.Landed": False,
+        "GuiFocus": 0,
+        "GuiFocusGalaxyMap": False,
+    }
+    current = {
+        "Flags.Docked": True,
+        "Flags.Landed": False,
+        "GuiFocus": 6,
+        "GuiFocusGalaxyMap": True,
+    }
 
-    transitions = diff_status_snapshots(previous, current, {"Flags.Docked"})
+    transitions = diff_status_snapshots(previous, current, {"Flags.Docked", "GuiFocusGalaxyMap"})
 
-    assert len(transitions) == 1
+    assert len(transitions) == 2
     assert transitions[0].name == "Flags.Docked"
     assert transitions[0].previous is False
     assert transitions[0].current is True
+    assert transitions[1].name == "GuiFocusGalaxyMap"
+    assert transitions[1].previous is False
+    assert transitions[1].current is True
 
 
 def test_format_and_overlay_lines_include_guifocus_name_and_raw_value() -> None:
@@ -59,10 +78,12 @@ def test_format_and_overlay_lines_include_guifocus_name_and_raw_value() -> None:
         "Flags.Docked": True,
         "Flags2.OnFoot": False,
         "GuiFocus": 6,
+        "GuiFocusGalaxyMap": True,
     }
 
-    lines = build_status_overlay_lines(snapshot, ["Flags.Docked", "GuiFocus"])
+    lines = build_status_overlay_lines(snapshot, ["Flags.Docked", "GuiFocus", "GuiFocusGalaxyMap"])
 
     assert lines[0] == "Flags.Docked: On"
     assert lines[1] == "GuiFocus: GalaxyMap (6)"
+    assert lines[2] == "GuiFocusGalaxyMap: On"
     assert format_status_value("Flags2.OnFoot", False) == "Off"

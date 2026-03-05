@@ -22,6 +22,7 @@ If something is unclear, capture it under `Open Questions`.
 - Keep journal overlay settings in the existing Overlay section.
 - Render the first observed dashboard snapshot in the status overlay immediately.
 - Show both mapped and raw `GuiFocus` values in status overlay output.
+- Expand Status tab tracking list to include each dashboard `GuiFocus` constant as its own trackable checkbox (`GuiFocusNoFocus` through `GuiFocusCodex`) in addition to raw `GuiFocus`.
 - Provide independent status overlay controls matching journal overlay controls (`enabled`, `lines`, `font size`, `color`).
 - Preserve current `journal_entry()` behavior and existing journal overlay behavior unless explicitly changed.
 
@@ -65,6 +66,8 @@ If something is unclear, capture it under `Open Questions`.
 - `OnFoot`, `InTaxi`, `InMulticrew`, `OnFootInStation`, `OnFootOnPlanet`, `AimDownSight`, `LowOxygen`, `LowHealth`, `Cold`, `Hot`, `VeryCold`, `VeryHot`, `GlideMode`, `OnFootInHangar`, `OnFootSocialSpace`, `OnFootExterior`, `BreathableAtmosphere`.
 - `GuiFocus` enum from `edmc_data`:
 - `NoFocus(0)`, `InternalPanel(1)`, `ExternalPanel(2)`, `CommsPanel(3)`, `RolePanel(4)`, `StationServices(5)`, `GalaxyMap(6)`, `SystemMap(7)`, `Orrery(8)`, `FSS(9)`, `SAA(10)`, `Codex(11)`.
+- Trackable `GuiFocus` fields exposed in Status tab:
+- `GuiFocus` (raw/mapped value), `GuiFocusNoFocus`, `GuiFocusInternalPanel`, `GuiFocusExternalPanel`, `GuiFocusCommsPanel`, `GuiFocusRolePanel`, `GuiFocusStationServices`, `GuiFocusGalaxyMap`, `GuiFocusSystemMap`, `GuiFocusOrrery`, `GuiFocusFSS`, `GuiFocusSAA`, `GuiFocusCodex`.
 - Current top-level keys in your live `Status.json` snapshot (`2026-03-04T21:46:09Z`):
 - `timestamp`, `event`, `Flags`, `Flags2`, `Pips`, `FireGroup`, `GuiFocus`, `Fuel`, `Cargo`, `LegalState`, `Balance`, `Destination`.
 
@@ -81,6 +84,7 @@ If something is unclear, capture it under `Open Questions`.
 - Status settings (tracked-status checkboxes + status overlay settings) are profile-scoped like journal event settings.
 - New profiles default all status checkboxes to `unchecked`.
 - Status overlay V1 includes all available status fields (`Flags`, `Flags2`, `GuiFocus`).
+- Status tracking list includes all dashboard `GuiFocus` constants as discrete fields (`GuiFocusNoFocus` ... `GuiFocusCodex`).
 
 ## Phase Overview
 
@@ -91,6 +95,7 @@ If something is unclear, capture it under `Open Questions`.
 | 3 | Implement Status tab UI and status overlay wiring | Completed |
 | 4 | Tests and validation for backend/UI/overlay/profile behavior | Completed |
 | 5 | Documentation and release/compliance notes | Completed |
+| 6 | Expand `GuiFocus` status tracking to include all dashboard constants | Completed |
 
 ## Phase Details
 
@@ -374,6 +379,60 @@ If something is unclear, capture it under `Open Questions`.
 - Docs and compliance notes are updated.
 - Implementation Results section is complete.
 
+### Phase 6: GuiFocus Constant Expansion
+- Expand status-field inventory and decode logic so the Status tab can track each dashboard `GuiFocus` constant directly.
+- Risks: compatibility with existing tracked status keys and unexpected diff noise.
+- Mitigations: additive field expansion (`GuiFocus` retained), deterministic decode/tests.
+
+| Stage | Description | Status |
+| --- | --- | --- |
+| 6.1 | Update status-field contract to include all `GuiFocus*` constants | Completed |
+| 6.2 | Implement decode/diff support for `GuiFocus*` fields | Completed |
+| 6.3 | Extend tests and docs; run verification | Completed |
+
+#### Stage 6.1 Detailed Plan
+- Objective:
+- Extend tracked status inventory for explicit `GuiFocus*` selections.
+- Steps:
+- Add all dashboard `GuiFocus` constants (`GuiFocusNoFocus` through `GuiFocusCodex`) to the status-field ordering used by Status tab checkboxes.
+- Keep `GuiFocus` raw value field available for mapped/raw display behavior.
+- Acceptance criteria:
+- Status tab inventory now includes raw `GuiFocus` plus all `GuiFocus*` constants.
+- Verification to run:
+- `python3 -m pytest -q tests/test_logeventminer_status.py`
+
+#### Stage 6.2 Detailed Plan
+- Objective:
+- Ensure `dashboard_entry()` snapshots emit deterministic values for each `GuiFocus*` field.
+- Steps:
+- Decode `GuiFocus` raw integer as before.
+- Emit per-constant boolean fields (`True` when current focus matches constant).
+- Preserve existing tracked diff behavior across all tracked status names.
+- Acceptance criteria:
+- `GuiFocus*` transitions are trackable without regressing raw `GuiFocus` behavior.
+- Verification to run:
+- `python3 -m pytest -q tests/test_logeventminer_status.py`
+
+#### Stage 6.3 Detailed Plan
+- Objective:
+- Validate and document behavior.
+- Steps:
+- Extend tests for inventory, normalization, snapshot decode, diff, and overlay line formatting with `GuiFocus*`.
+- Record implementation/test results in this plan.
+- Acceptance criteria:
+- Tests pass and plan docs reflect shipped behavior.
+- Verification to run:
+- `python3 -m py_compile load.py overlay.py logeventminer_status.py`
+- `python3 -m pytest -q`
+
+#### Phase 6 Execution Order
+- Implement in strict order: `6.1` -> `6.2` -> `6.3`.
+
+#### Phase 6 Exit Criteria
+- Status tab supports tracking each dashboard `GuiFocus` constant directly.
+- Raw `GuiFocus` mapped+raw formatting remains intact.
+- Tests cover `GuiFocus*` inventory/decode/diff/overlay behavior.
+
 ## Test Plan (Per Iteration)
 - Env setup (once per machine):
 - `python3 -m venv .venv && source .venv/bin/activate && python -m pip install -U pip && python -m pip install -r requirements-dev.txt`
@@ -394,6 +453,7 @@ If something is unclear, capture it under `Open Questions`.
 - Phase 3 implemented on 2026-03-04.
 - Phase 4 implemented on 2026-03-04.
 - Phase 5 implemented on 2026-03-04.
+- Phase 6 implemented on 2026-03-04.
 
 ### Phase 1 Execution Summary
 - Stage 1.1:
@@ -462,3 +522,17 @@ If something is unclear, capture it under `Open Questions`.
 ### Tests Run For Phase 5
 - `if [ -f scripts/check_edmc_python.py ]; then python3 scripts/check_edmc_python.py; else echo "scripts/check_edmc_python.py not present"; fi`
 - Result: Skipped (`scripts/check_edmc_python.py not present`).
+
+### Phase 6 Execution Summary
+- Stage 6.1:
+- Completed. Expanded status inventory to include all dashboard `GuiFocus*` constants while retaining raw `GuiFocus`.
+- Stage 6.2:
+- Completed. Updated status snapshot decode to emit per-constant boolean `GuiFocus*` fields and preserve raw `GuiFocus`.
+- Stage 6.3:
+- Completed. Extended status helper tests for `GuiFocus*` inventory/normalize/decode/diff/overlay coverage and reran verification.
+
+### Tests Run For Phase 6
+- `python3 -m py_compile load.py overlay.py logeventminer_status.py`
+- Result: Passed.
+- `python3 -m pytest -q`
+- Result: Passed.
