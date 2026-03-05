@@ -41,8 +41,12 @@ _DISPLAY_TTL_SECONDS = 60
 _REDRAW_INTERVAL_SECONDS = 30.0
 _BASE_X = 5
 _BASE_Y = 955
+_STATUS_BASE_X = 420
+_STATUS_BASE_Y = 955
 _ANCHOR_OFFSET_X = _BASE_X
 _ANCHOR_OFFSET_Y = _BASE_Y
+_STATUS_ANCHOR_OFFSET_X = _STATUS_BASE_X
+_STATUS_ANCHOR_OFFSET_Y = _STATUS_BASE_Y
 _COLOR_CACHE: dict[str, Optional[tuple[int, int, int]]] = {}
 _COLOR_ROOT = None
 _LOG_PREFIX = "[overlay]"
@@ -485,21 +489,264 @@ class OverlayManager:
                 self._render_with_positions(positions)
 
 
-_manager: Optional[OverlayManager] = None
+class StatusOverlayManager:
+    def __init__(self, plugin_name: str, logger: logging.Logger) -> None:
+        self._plugin_name = plugin_name
+        self._group_name = f"{plugin_name}-status"
+        self._logger = logger
+        self._overlay = None
+        self._config = OverlayConfig()
+        self._lines: list[str] = []
+        self._lock = threading.Lock()
+        self._group_registered = False
+        self._missing_backend_logged = False
+        self._disabled_skip_logged = False
+        self._last_rendered = 0
+        self._redraw_stop = threading.Event()
+        self._redraw_thread = threading.Thread(target=self._redraw_loop, daemon=True)
+        self._redraw_thread.start()
+        safe_prefix = plugin_name.lower().replace(" ", "").replace("-", "")
+        self._id_prefix = f"{safe_prefix}-status-overlay-"
+        self._debug(
+            "status manager created (id_prefix=%s, group_api=%s, backend=%s)",
+            self._id_prefix,
+            "available" if define_plugin_group is not None else "missing",
+            "available" if edmcoverlay is not None else "missing",
+        )
+
+    def _debug(self, message: str, *args) -> None:
+        self._logger.debug(f"[{self._plugin_name}] {_LOG_PREFIX} {message}", *args)
+
+    def register_group(self) -> None:
+        if self._group_registered:
+            self._debug("status plugin group already registered.")
+            return
+        if define_plugin_group is None:
+            self._debug("status plugin group API unavailable; using legacy absolute coordinates.")
+            return
+        try:
+            define_plugin_group(
+                plugin_group=self._group_name,
+                matching_prefixes=[self._id_prefix],
+                id_prefix_group=self._group_name,
+                id_prefixes=[self._id_prefix],
+                id_prefix_group_anchor="sw",
+                id_prefix_offset_x=_STATUS_ANCHOR_OFFSET_X,
+                id_prefix_offset_y=_STATUS_ANCHOR_OFFSET_Y,
+                background_color="#AA000000",
+                background_border_width=5,
+            )
+            self._group_registered = True
+            self._debug(
+                "status plugin group registered (group=%s, prefix=%s)",
+                self._group_name,
+                self._id_prefix,
+            )
+        except PluginGroupingError as exc:  # pragma: no cover - runtime specific
+            self._debug("status plugin group registration failed: %s", exc)
+        except Exception as exc:  # pragma: no cover - defensive guard
+            self._debug("status plugin group registration error: %s", exc)
+
+    def configure(self, *, enabled: bool, max_lines: int, font_size: str, color: str) -> None:
+        self._debug(
+            "status configure requested: enabled=%s lines=%s font=%s color=%s",
+            enabled,
+            max_lines,
+            font_size,
+            color,
+        )
+        with self._lock:
+            self._config.enabled = bool(enabled)
+            self._config.max_lines = max(1, int(max_lines))
+            self._config.font_size = _normalise_font_size(font_size)
+            self._config.color = _normalise_color(color, self._config.color)
+            self._config.color_rgb = _color_to_rgb(self._config.color)
+            self._lines = self._lines[: self._config.max_lines]
+
+        if not self._config.enabled:
+            self._debug("status overlay disabled; clearing rendered lines.")
+            self.clear()
+            return
+
+        self._disabled_skip_logged = False
+        self.register_group()
+        self._render()
+
+    def set_status_lines(self, lines: list[str]) -> None:
+        if not self._config.enabled:
+            if not self._disabled_skip_logged:
+                self._debug("set_status_lines skipped while status overlay disabled.")
+                self._disabled_skip_logged = True
+            return
+
+        cleaned = [str(line).strip() for line in lines if str(line).strip()]
+        with self._lock:
+            self._lines = cleaned[: self._config.max_lines]
+        self._render()
+
+    def clear(self) -> None:
+        cleared_count = 0
+        with self._lock:
+            cleared_count = len(self._lines)
+            self._lines.clear()
+        self._debug("status clear requested; removed %d lines.", cleared_count)
+        if not self._ensure_overlay():
+            self._last_rendered = 0
+            return
+        size_token = _OVERLAY_SIZE_MAP[self._config.font_size]
+        for index in range(self._last_rendered):
+            self._send_message(
+                f"{self._id_prefix}line-{index}",
+                "",
+                self._config.color,
+                0 if self._group_registered else _STATUS_BASE_X,
+                0,
+                ttl=1,
+                size=size_token,
+            )
+        self._last_rendered = 0
+
+    def shutdown(self) -> None:
+        self._debug("status shutdown requested.")
+        self.clear()
+        self._redraw_stop.set()
+        self._overlay = None
+
+    def _ensure_overlay(self) -> bool:
+        if self._overlay is not None:
+            return True
+        if edmcoverlay is None:
+            if not self._missing_backend_logged:
+                self._logger.warning(
+                    "[%s] %s EDMCOverlay backend module unavailable; status overlay cannot be sent.",
+                    self._plugin_name,
+                    _LOG_PREFIX,
+                )
+                self._missing_backend_logged = True
+            return False
+        try:
+            self._overlay = edmcoverlay.Overlay()
+            self._missing_backend_logged = False
+            self._debug("status overlay client initialised successfully.")
+            return True
+        except Exception as exc:  # pragma: no cover - runtime specific
+            self._logger.warning(
+                "[%s] %s failed to initialise status overlay client: %s",
+                self._plugin_name,
+                _LOG_PREFIX,
+                exc,
+            )
+            self._overlay = None
+            return False
+
+    def _send_message(
+        self,
+        message_id: str,
+        text: str,
+        color: str,
+        x_pos: int,
+        y_pos: int,
+        *,
+        ttl: int,
+        size: str,
+    ) -> bool:
+        try:
+            self._overlay.send_message(
+                message_id,
+                text,
+                color,
+                x_pos,
+                y_pos,
+                ttl=ttl,
+                size=size,
+            )
+            return True
+        except Exception as exc:
+            self._logger.warning(
+                "[%s] %s status send_message failed id=%s error=%s",
+                self._plugin_name,
+                _LOG_PREFIX,
+                message_id,
+                exc,
+            )
+            return False
+
+    def _compute_positions(self, count: int) -> list[int]:
+        line_height = _LINE_HEIGHT[self._config.font_size]
+        if self._group_registered:
+            last_index = count - 1
+            return [-(line_height * (last_index - index)) for index in range(count)]
+        start_row = max(self._config.max_lines - count, 0)
+        base_offset = _STATUS_BASE_Y - line_height * (self._config.max_lines - 1)
+        return [base_offset + line_height * (start_row + index) for index in range(count)]
+
+    def _render(self) -> None:
+        if not self._ensure_overlay():
+            self._debug("status render skipped because overlay client is unavailable.")
+            return
+
+        with self._lock:
+            entries = list(self._lines)
+            size_token = _OVERLAY_SIZE_MAP[self._config.font_size]
+            color = self._config.color
+            positions = self._compute_positions(len(entries))
+            x_pos = 0 if self._group_registered else _STATUS_BASE_X
+
+        for index, text in enumerate(entries):
+            y_pos = positions[index] if index < len(positions) else 0
+            self._send_message(
+                f"{self._id_prefix}line-{index}",
+                text,
+                color,
+                x_pos,
+                y_pos,
+                ttl=_DISPLAY_TTL_SECONDS,
+                size=size_token,
+            )
+
+        previous = self._last_rendered
+        for index in range(len(entries), previous):
+            self._send_message(
+                f"{self._id_prefix}line-{index}",
+                "",
+                color,
+                x_pos,
+                0,
+                ttl=1,
+                size=size_token,
+            )
+        self._last_rendered = len(entries)
+
+    def _redraw_loop(self) -> None:
+        while not self._redraw_stop.wait(_REDRAW_INTERVAL_SECONDS):
+            with self._lock:
+                should_render = self._config.enabled and bool(self._lines)
+            if should_render:
+                self._render()
+
+
+_journal_manager: Optional[OverlayManager] = None
+_status_manager: Optional[StatusOverlayManager] = None
 
 
 def init(plugin_name: str, logger: logging.Logger) -> None:
-    global _manager
-    if _manager is None:
-        _manager = OverlayManager(plugin_name, logger)
+    global _journal_manager, _status_manager
+    if _journal_manager is None:
+        _journal_manager = OverlayManager(plugin_name, logger)
         logger.debug("[%s] %s init created overlay manager.", plugin_name, _LOG_PREFIX)
     else:
         logger.debug("[%s] %s init reusing existing overlay manager.", plugin_name, _LOG_PREFIX)
-    _manager.register_group()
+    if _status_manager is None:
+        _status_manager = StatusOverlayManager(plugin_name, logger)
+        logger.debug("[%s] %s init created status overlay manager.", plugin_name, _LOG_PREFIX)
+    else:
+        logger.debug("[%s] %s init reusing existing status overlay manager.", plugin_name, _LOG_PREFIX)
+    _journal_manager.register_group()
+    _status_manager.register_group()
 
 
 def configure(enabled: bool, max_lines: int, font_size: str, color: str) -> None:
-    if _manager is None:
+    if _journal_manager is None:
         logging.getLogger().debug(
             "%s configure requested before init; dropping request enabled=%s lines=%s font=%s color=%s",
             _LOG_PREFIX,
@@ -509,7 +756,7 @@ def configure(enabled: bool, max_lines: int, font_size: str, color: str) -> None
             color,
         )
         return
-    _manager.configure(
+    _journal_manager.configure(
         enabled=enabled,
         max_lines=max_lines,
         font_size=font_size,
@@ -518,21 +765,54 @@ def configure(enabled: bool, max_lines: int, font_size: str, color: str) -> None
 
 
 def push_event(event_name: str, timestamp: Optional[str]) -> None:
-    if _manager is None:
+    if _journal_manager is None:
         logging.getLogger().debug(
             "%s push_event requested before init; dropping event=%s",
             _LOG_PREFIX,
             event_name,
         )
         return
-    _manager.push_event(event_name, timestamp)
+    _journal_manager.push_event(event_name, timestamp)
+
+
+def configure_status(enabled: bool, max_lines: int, font_size: str, color: str) -> None:
+    if _status_manager is None:
+        logging.getLogger().debug(
+            "%s configure_status requested before init; dropping request enabled=%s lines=%s font=%s color=%s",
+            _LOG_PREFIX,
+            enabled,
+            max_lines,
+            font_size,
+            color,
+        )
+        return
+    _status_manager.configure(
+        enabled=enabled,
+        max_lines=max_lines,
+        font_size=font_size,
+        color=color,
+    )
+
+
+def set_status_lines(lines: list[str]) -> None:
+    if _status_manager is None:
+        logging.getLogger().debug(
+            "%s set_status_lines requested before init; dropping %d lines",
+            _LOG_PREFIX,
+            len(lines),
+        )
+        return
+    _status_manager.set_status_lines(lines)
 
 
 def shutdown() -> None:
-    if _manager is None:
+    if _journal_manager is None and _status_manager is None:
         logging.getLogger().debug("%s shutdown requested before init; nothing to do.", _LOG_PREFIX)
         return
-    _manager.shutdown()
+    if _journal_manager is not None:
+        _journal_manager.shutdown()
+    if _status_manager is not None:
+        _status_manager.shutdown()
 
 
 def _normalise_font_size(value: str) -> str:

@@ -11,7 +11,7 @@ from pathlib import Path
 from typing import Any, Dict, Iterable, Optional, Set
 
 import tkinter as tk
-from tkinter import filedialog
+from tkinter import filedialog, ttk
 
 try:
     from config import appname, config
@@ -23,6 +23,16 @@ try:
     import overlay as overlay_support
 except Exception:  # pragma: no cover - optional dependency
     overlay_support = None  # type: ignore
+
+from logeventminer_status import (
+    StatusTransition,
+    all_status_field_names,
+    build_status_overlay_lines,
+    decode_status_snapshot,
+    diff_status_snapshots,
+    format_status_value,
+    normalize_tracked_statuses,
+)
 
 
 PLUGIN_DIR = Path(__file__).resolve().parent
@@ -71,6 +81,12 @@ DEFAULT_OVERLAY_LINES = 10
 DEFAULT_OVERLAY_FONT_SIZE = "medium"
 DEFAULT_OVERLAY_COLOR = "orange"
 DEFAULT_OVERLAY_ENABLED = False
+DEFAULT_STATUS_CHANGE_LOGGING_ENABLED = False
+DEFAULT_TRACKED_STATUS_KEYS: Set[str] = set()
+DEFAULT_STATUS_OVERLAY_ENABLED = False
+DEFAULT_STATUS_OVERLAY_LINES = 30
+DEFAULT_STATUS_OVERLAY_FONT_SIZE = "small"
+DEFAULT_STATUS_OVERLAY_COLOR = "cyan"
 OVERLAY_FONT_SIZES = ("small", "medium", "large")
 
 LOG_FORMAT = "%(asctime)s - %(name)s - %(levelname)s - %(message)s"
@@ -123,6 +139,7 @@ class PrefsState:
         self.forward_to_edmc_var: Optional[tk.BooleanVar] = None
         self.payload_limit_var: Optional[tk.StringVar] = None
         self.logging_enabled_var: Optional[tk.BooleanVar] = None
+        self.status_logging_enabled_var: Optional[tk.BooleanVar] = None
         self.rotation_enabled_var: Optional[tk.BooleanVar] = None
         self.rotation_max_bytes_var: Optional[tk.StringVar] = None
         self.rotation_backup_count_var: Optional[tk.StringVar] = None
@@ -142,6 +159,14 @@ class PrefsState:
         self.overlay_font_menu: Optional[tk.OptionMenu] = None
         self.overlay_color_var: Optional[tk.StringVar] = None
         self.overlay_color_entry: Optional[tk.Entry] = None
+        self.status_track_vars: Dict[str, tk.BooleanVar] = {}
+        self.status_overlay_enabled_var: Optional[tk.BooleanVar] = None
+        self.status_overlay_lines_var: Optional[tk.StringVar] = None
+        self.status_overlay_lines_entry: Optional[tk.Entry] = None
+        self.status_overlay_font_size_var: Optional[tk.StringVar] = None
+        self.status_overlay_font_menu: Optional[tk.OptionMenu] = None
+        self.status_overlay_color_var: Optional[tk.StringVar] = None
+        self.status_overlay_color_entry: Optional[tk.Entry] = None
 
 
 prefs_state = PrefsState()
@@ -164,6 +189,14 @@ _overlay_enabled: bool = DEFAULT_OVERLAY_ENABLED
 _overlay_line_count: int = DEFAULT_OVERLAY_LINES
 _overlay_font_size: str = DEFAULT_OVERLAY_FONT_SIZE
 _overlay_color: str = DEFAULT_OVERLAY_COLOR
+_status_change_logging_enabled: bool = DEFAULT_STATUS_CHANGE_LOGGING_ENABLED
+_tracked_status_keys: Set[str] = set(DEFAULT_TRACKED_STATUS_KEYS)
+_status_overlay_enabled: bool = DEFAULT_STATUS_OVERLAY_ENABLED
+_status_overlay_line_count: int = DEFAULT_STATUS_OVERLAY_LINES
+_status_overlay_font_size: str = DEFAULT_STATUS_OVERLAY_FONT_SIZE
+_status_overlay_color: str = DEFAULT_STATUS_OVERLAY_COLOR
+_last_status_snapshot: Optional[Dict[str, Any]] = None
+_STATUS_FIELD_NAMES = all_status_field_names()
 
 
 # ---------------------------------------------------------------------------
@@ -231,11 +264,23 @@ def _clone_settings(settings: Dict[str, Any]) -> Dict[str, Any]:
         "include_payload": bool(settings.get("include_payload", True)),
         "payload_limit": settings.get("payload_limit"),
         "logging_enabled": bool(settings.get("logging_enabled", True)),
+        "status_change_logging_enabled": bool(
+            settings.get("status_change_logging_enabled", DEFAULT_STATUS_CHANGE_LOGGING_ENABLED)
+        ),
+        "tracked_status_keys": sorted(
+            normalize_tracked_statuses(settings.get("tracked_status_keys", DEFAULT_TRACKED_STATUS_KEYS))
+        ),
         "forward_to_edmc_log": bool(settings.get("forward_to_edmc_log", False)),
         "log_file_path": settings.get("log_file_path"),
         "rotation_enabled": bool(settings.get("rotation_enabled", True)),
         "rotation_max_bytes": settings.get("rotation_max_bytes"),
         "rotation_backup_count": settings.get("rotation_backup_count"),
+        "status_overlay_enabled": bool(settings.get("status_overlay_enabled", DEFAULT_STATUS_OVERLAY_ENABLED)),
+        "status_overlay_lines": settings.get("status_overlay_lines", DEFAULT_STATUS_OVERLAY_LINES),
+        "status_overlay_font_size": settings.get(
+            "status_overlay_font_size", DEFAULT_STATUS_OVERLAY_FONT_SIZE
+        ),
+        "status_overlay_color": settings.get("status_overlay_color", DEFAULT_STATUS_OVERLAY_COLOR),
     }
 
 
@@ -247,11 +292,17 @@ def _default_settings() -> Dict[str, Any]:
         "include_payload": True,
         "payload_limit": None,
         "logging_enabled": True,
+        "status_change_logging_enabled": DEFAULT_STATUS_CHANGE_LOGGING_ENABLED,
+        "tracked_status_keys": sorted(DEFAULT_TRACKED_STATUS_KEYS),
         "forward_to_edmc_log": False,
         "log_file_path": None,
         "rotation_enabled": True,
         "rotation_max_bytes": 5 * 1024 * 1024,
         "rotation_backup_count": 5,
+        "status_overlay_enabled": DEFAULT_STATUS_OVERLAY_ENABLED,
+        "status_overlay_lines": DEFAULT_STATUS_OVERLAY_LINES,
+        "status_overlay_font_size": DEFAULT_STATUS_OVERLAY_FONT_SIZE,
+        "status_overlay_color": DEFAULT_STATUS_OVERLAY_COLOR,
     }
 
 
@@ -281,6 +332,12 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
         payload_limit = None
 
     logging_enabled = bool(settings.get("logging_enabled", True))
+    status_change_logging_enabled = bool(
+        settings.get("status_change_logging_enabled", DEFAULT_STATUS_CHANGE_LOGGING_ENABLED)
+    )
+    tracked_status_keys = sorted(
+        normalize_tracked_statuses(settings.get("tracked_status_keys", DEFAULT_TRACKED_STATUS_KEYS))
+    )
 
     forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
@@ -301,6 +358,28 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
             rotation_backup_count = base["rotation_backup_count"]
     except (TypeError, ValueError):
         rotation_backup_count = base["rotation_backup_count"]
+
+    status_overlay_enabled = bool(settings.get("status_overlay_enabled", DEFAULT_STATUS_OVERLAY_ENABLED))
+
+    status_overlay_lines_raw = settings.get("status_overlay_lines")
+    try:
+        status_overlay_lines = int(status_overlay_lines_raw)
+        if status_overlay_lines < 1:
+            status_overlay_lines = base["status_overlay_lines"]
+    except (TypeError, ValueError):
+        status_overlay_lines = base["status_overlay_lines"]
+
+    status_overlay_font_size = str(
+        settings.get("status_overlay_font_size", DEFAULT_STATUS_OVERLAY_FONT_SIZE) or ""
+    ).strip().lower()
+    if status_overlay_font_size not in OVERLAY_FONT_SIZES:
+        status_overlay_font_size = base["status_overlay_font_size"]
+
+    status_overlay_color = str(
+        settings.get("status_overlay_color", DEFAULT_STATUS_OVERLAY_COLOR) or ""
+    ).strip()
+    if not status_overlay_color:
+        status_overlay_color = base["status_overlay_color"]
 
     raw_log_path = settings.get("log_file_path")
     log_file_path: Optional[str]
@@ -323,11 +402,17 @@ def _sanitize_settings(settings: Any) -> Dict[str, Any]:
         "include_payload": include_payload,
         "payload_limit": payload_limit,
         "logging_enabled": logging_enabled,
+        "status_change_logging_enabled": status_change_logging_enabled,
+        "tracked_status_keys": tracked_status_keys,
         "forward_to_edmc_log": forward_to_edmc_log,
         "log_file_path": log_file_path,
         "rotation_enabled": rotation_enabled,
         "rotation_max_bytes": rotation_max_bytes,
         "rotation_backup_count": rotation_backup_count,
+        "status_overlay_enabled": status_overlay_enabled,
+        "status_overlay_lines": status_overlay_lines,
+        "status_overlay_font_size": status_overlay_font_size,
+        "status_overlay_color": status_overlay_color,
     }
 
 
@@ -730,6 +815,37 @@ def _refresh_overlay_inputs() -> None:
         prefs_state.overlay_color_entry.config(state=state)
 
 
+def _refresh_status_overlay_inputs() -> None:
+    if prefs_state.status_overlay_enabled_var is None:
+        return
+    enabled = bool(prefs_state.status_overlay_enabled_var.get())
+    state = tk.NORMAL if enabled else tk.DISABLED
+    if prefs_state.status_overlay_lines_entry is not None:
+        prefs_state.status_overlay_lines_entry.config(state=state)
+    if prefs_state.status_overlay_font_menu is not None:
+        prefs_state.status_overlay_font_menu.config(state=state)
+    if prefs_state.status_overlay_color_entry is not None:
+        prefs_state.status_overlay_color_entry.config(state=state)
+
+
+def _tracked_status_names_ordered() -> list[str]:
+    return [name for name in _STATUS_FIELD_NAMES if name in _tracked_status_keys]
+
+
+def _refresh_status_overlay_lines() -> None:
+    if overlay_support is None:
+        return
+    if not _status_overlay_enabled:
+        overlay_support.set_status_lines([])
+        return
+    if _last_status_snapshot is None:
+        overlay_support.set_status_lines([])
+        return
+    overlay_support.set_status_lines(
+        build_status_overlay_lines(_last_status_snapshot, _tracked_status_names_ordered())
+    )
+
+
 def _get_current_settings() -> Dict[str, Any]:
     return {
         "ignored_events": sorted(_ignored_events),
@@ -738,17 +854,26 @@ def _get_current_settings() -> Dict[str, Any]:
         "include_payload": _include_payload,
         "payload_limit": _payload_limit,
         "logging_enabled": _logging_enabled,
+        "status_change_logging_enabled": _status_change_logging_enabled,
+        "tracked_status_keys": sorted(_tracked_status_keys),
         "forward_to_edmc_log": _forward_to_edmc_log,
         "log_file_path": str(_custom_log_path) if _custom_log_path else None,
         "rotation_enabled": _log_rotation_enabled,
         "rotation_max_bytes": _log_rotation_max_bytes,
         "rotation_backup_count": _log_rotation_backup_count,
+        "status_overlay_enabled": _status_overlay_enabled,
+        "status_overlay_lines": _status_overlay_line_count,
+        "status_overlay_font_size": _status_overlay_font_size,
+        "status_overlay_color": _status_overlay_color,
     }
 
 
 def _apply_settings(settings: Dict[str, Any]) -> None:
-    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled
+    global _status_change_logging_enabled, _tracked_status_keys
+    global _forward_to_edmc_log, _custom_log_path
     global _log_rotation_enabled, _log_rotation_max_bytes, _log_rotation_backup_count
+    global _status_overlay_enabled, _status_overlay_line_count, _status_overlay_font_size, _status_overlay_color
 
     defaults = _default_settings()
 
@@ -779,6 +904,10 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     _payload_limit = payload_limit
 
     _logging_enabled = bool(settings.get("logging_enabled", True))
+    _status_change_logging_enabled = bool(
+        settings.get("status_change_logging_enabled", DEFAULT_STATUS_CHANGE_LOGGING_ENABLED)
+    )
+    _tracked_status_keys = normalize_tracked_statuses(settings.get("tracked_status_keys", DEFAULT_TRACKED_STATUS_KEYS))
     _forward_to_edmc_log = bool(settings.get("forward_to_edmc_log", False))
 
     _log_rotation_enabled = bool(settings.get("rotation_enabled", True))
@@ -807,6 +936,34 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
         rotation_backups = defaults["rotation_backup_count"]
     _log_rotation_backup_count = rotation_backups
 
+    _status_overlay_enabled = bool(settings.get("status_overlay_enabled", DEFAULT_STATUS_OVERLAY_ENABLED))
+
+    status_overlay_lines = settings.get("status_overlay_lines")
+    if isinstance(status_overlay_lines, (int, float)):
+        status_overlay_lines = int(status_overlay_lines)
+    else:
+        try:
+            status_overlay_lines = int(str(status_overlay_lines))
+        except (TypeError, ValueError):
+            status_overlay_lines = defaults["status_overlay_lines"]
+    if status_overlay_lines < 1:
+        status_overlay_lines = defaults["status_overlay_lines"]
+    _status_overlay_line_count = status_overlay_lines
+
+    status_overlay_font_size = str(
+        settings.get("status_overlay_font_size", DEFAULT_STATUS_OVERLAY_FONT_SIZE) or ""
+    ).strip().lower()
+    if status_overlay_font_size not in OVERLAY_FONT_SIZES:
+        status_overlay_font_size = defaults["status_overlay_font_size"]
+    _status_overlay_font_size = status_overlay_font_size
+
+    status_overlay_color = str(
+        settings.get("status_overlay_color", DEFAULT_STATUS_OVERLAY_COLOR) or ""
+    ).strip()
+    if not status_overlay_color:
+        status_overlay_color = defaults["status_overlay_color"]
+    _status_overlay_color = status_overlay_color
+
     raw_log_path = settings.get("log_file_path")
     if isinstance(raw_log_path, str) and raw_log_path.strip():
         try:
@@ -829,6 +986,14 @@ def _apply_settings(settings: Dict[str, Any]) -> None:
     config.set(CONFIG_ROTATION_BACKUP_COUNT, str(_log_rotation_backup_count))
     _ensure_file_logging()
     _sync_edmc_forwarding()
+    if overlay_support is not None:
+        overlay_support.configure_status(
+            _status_overlay_enabled,
+            _status_overlay_line_count,
+            _status_overlay_font_size,
+            _status_overlay_color,
+        )
+        _refresh_status_overlay_lines()
 
 
 def _populate_prefs_fields() -> None:
@@ -848,6 +1013,8 @@ def _populate_prefs_fields() -> None:
         prefs_state.payload_limit_var.set("" if _payload_limit is None else str(_payload_limit))
     if prefs_state.logging_enabled_var is not None:
         prefs_state.logging_enabled_var.set(_logging_enabled)
+    if prefs_state.status_logging_enabled_var is not None:
+        prefs_state.status_logging_enabled_var.set(_status_change_logging_enabled)
     if prefs_state.profile_var is not None:
         prefs_state.profile_var.set(_active_profile)
     if prefs_state.new_profile_var is not None:
@@ -871,14 +1038,28 @@ def _populate_prefs_fields() -> None:
         prefs_state.overlay_font_size_var.set(_overlay_font_size)
     if prefs_state.overlay_color_var is not None:
         prefs_state.overlay_color_var.set(_overlay_color)
+    for name, var in prefs_state.status_track_vars.items():
+        var.set(name in _tracked_status_keys)
+    if prefs_state.status_overlay_enabled_var is not None:
+        prefs_state.status_overlay_enabled_var.set(_status_overlay_enabled)
+    if prefs_state.status_overlay_lines_var is not None:
+        prefs_state.status_overlay_lines_var.set(str(_status_overlay_line_count))
+    if prefs_state.status_overlay_font_size_var is not None:
+        prefs_state.status_overlay_font_size_var.set(_status_overlay_font_size)
+    if prefs_state.status_overlay_color_var is not None:
+        prefs_state.status_overlay_color_var.set(_status_overlay_color)
     _refresh_overlay_inputs()
+    _refresh_status_overlay_inputs()
     _refresh_rotation_inputs()
 
 
 def _update_state_from_widgets() -> Dict[str, Any]:
-    global _filter_mode, _include_payload, _payload_limit, _logging_enabled, _forward_to_edmc_log, _custom_log_path
+    global _filter_mode, _include_payload, _payload_limit, _logging_enabled
+    global _status_change_logging_enabled, _tracked_status_keys
+    global _forward_to_edmc_log, _custom_log_path
     global _log_rotation_enabled, _log_rotation_max_bytes, _log_rotation_backup_count
     global _overlay_enabled, _overlay_line_count, _overlay_font_size, _overlay_color
+    global _status_overlay_enabled, _status_overlay_line_count, _status_overlay_font_size, _status_overlay_color
 
     overlay_was_enabled = _overlay_enabled
 
@@ -938,6 +1119,9 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         logging_enabled = bool(prefs_state.logging_enabled_var.get())
         _logging_enabled = logging_enabled
         config.set(CONFIG_LOGGING_ENABLED, logging_enabled)
+
+    if prefs_state.status_logging_enabled_var is not None:
+        _status_change_logging_enabled = bool(prefs_state.status_logging_enabled_var.get())
 
     defaults = _default_settings()
 
@@ -1003,9 +1187,44 @@ def _update_state_from_widgets() -> Dict[str, Any]:
         prefs_state.overlay_color_var.set(color_value)
         config.set(CONFIG_OVERLAY_COLOR, color_value)
 
+    tracked: Set[str] = set()
+    for name, var in prefs_state.status_track_vars.items():
+        if bool(var.get()):
+            tracked.add(name)
+    _tracked_status_keys = normalize_tracked_statuses(tracked)
+
+    if prefs_state.status_overlay_enabled_var is not None:
+        _status_overlay_enabled = bool(prefs_state.status_overlay_enabled_var.get())
+
+    if prefs_state.status_overlay_lines_var is not None:
+        raw_lines = (prefs_state.status_overlay_lines_var.get() or "").strip()
+        try:
+            parsed_lines = int(raw_lines)
+        except ValueError:
+            parsed_lines = DEFAULT_STATUS_OVERLAY_LINES
+        if parsed_lines < 1:
+            parsed_lines = DEFAULT_STATUS_OVERLAY_LINES
+        _status_overlay_line_count = parsed_lines
+        prefs_state.status_overlay_lines_var.set(str(parsed_lines))
+
+    if prefs_state.status_overlay_font_size_var is not None:
+        size_value = (prefs_state.status_overlay_font_size_var.get() or "").strip().lower()
+        if size_value not in OVERLAY_FONT_SIZES:
+            size_value = DEFAULT_STATUS_OVERLAY_FONT_SIZE
+        _status_overlay_font_size = size_value
+        prefs_state.status_overlay_font_size_var.set(size_value)
+
+    if prefs_state.status_overlay_color_var is not None:
+        color_value = (prefs_state.status_overlay_color_var.get() or "").strip()
+        if not color_value:
+            color_value = DEFAULT_STATUS_OVERLAY_COLOR
+        _status_overlay_color = color_value
+        prefs_state.status_overlay_color_var.set(color_value)
+
     _ensure_file_logging()
     _refresh_rotation_inputs()
     _refresh_overlay_inputs()
+    _refresh_status_overlay_inputs()
     if prefs_state.profile_log_var is not None:
         desired_enabled = bool(prefs_state.profile_log_var.get())
         if desired_enabled != _current_profile_suffix_enabled(_active_profile):
@@ -1021,6 +1240,13 @@ def _update_state_from_widgets() -> Dict[str, Any]:
             _overlay_font_size,
             _overlay_color,
         )
+        overlay_support.configure_status(
+            _status_overlay_enabled,
+            _status_overlay_line_count,
+            _status_overlay_font_size,
+            _status_overlay_color,
+        )
+        _refresh_status_overlay_lines()
     if _overlay_enabled and not overlay_was_enabled:
         _emit_overlay_started("prefs-enabled")
 
@@ -1105,7 +1331,9 @@ def _on_create_profile() -> None:
 
     snapshot = _update_state_from_widgets()
     _profiles[_active_profile] = _clone_settings(snapshot)
-    _profiles[name] = _clone_settings(snapshot)
+    new_profile_settings = _clone_settings(snapshot)
+    new_profile_settings["tracked_status_keys"] = []
+    _profiles[name] = new_profile_settings
     _save_profiles()
     _refresh_profile_menu()
     _set_active_profile(name)
@@ -1132,6 +1360,15 @@ def _current_payload_limit() -> Optional[int]:
     return _payload_limit
 
 
+def _log_status_transition(transition: StatusTransition) -> None:
+    logger.info(
+        "Status change %s: %s -> %s",
+        transition.name,
+        format_status_value(transition.name, transition.previous),
+        format_status_value(transition.name, transition.current),
+    )
+
+
 # ---------------------------------------------------------------------------
 # EDMC plugin hooks
 # ---------------------------------------------------------------------------
@@ -1154,6 +1391,11 @@ def plugin_start3(plugin_dir: str) -> str:
     )
     logger.info("Logging %s", "enabled" if _logging_enabled else "disabled")
     logger.info(
+        "Status change logging %s (%d tracked statuses)",
+        "enabled" if _status_change_logging_enabled else "disabled",
+        len(_tracked_status_keys),
+    )
+    logger.info(
         "Payload logging %s%s",
         "enabled" if _include_payload else "disabled",
         " (limit %d)" % _payload_limit if _payload_limit else "",
@@ -1164,7 +1406,8 @@ def plugin_start3(plugin_dir: str) -> str:
     )
     logger.info("Log file path: %s", _current_log_path())
     _debug(
-        "Startup settings profile=%s mode=%s ignored=%d included=%d payload=%s limit=%s journal_logging=%s overlay=%s",
+        "Startup settings profile=%s mode=%s ignored=%d included=%d payload=%s limit=%s "
+        "journal_logging=%s journal_overlay=%s status_logging=%s tracked_statuses=%d status_overlay=%s",
         _active_profile,
         _filter_mode,
         len(_ignored_events),
@@ -1173,6 +1416,9 @@ def plugin_start3(plugin_dir: str) -> str:
         _payload_limit if _payload_limit is not None else "none",
         _logging_enabled,
         _overlay_enabled,
+        _status_change_logging_enabled,
+        len(_tracked_status_keys),
+        _status_overlay_enabled,
     )
     return PLUGIN_NAME
 
@@ -1204,15 +1450,24 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     if _log_file_path is None:
         _ensure_file_logging()
 
-    frame = nb.Frame(parent)
+    container = nb.Frame(parent)
+    container.columnconfigure(0, weight=1)
+
+    nb.Label(container, text="EDMC-LogEventMiner", font=("TkDefaultFont", 10, "bold")).grid(
+        row=0, column=0, sticky=tk.W, padx=10, pady=(10, 4)
+    )
+
+    settings_tabs = ttk.Notebook(container)
+    settings_tabs.grid(row=1, column=0, sticky=tk.W + tk.E, padx=10, pady=(0, 10))
+
+    frame = nb.Frame(settings_tabs)
     frame.columnconfigure(1, weight=1)
+    status_tab = nb.Frame(settings_tabs)
+    status_tab.columnconfigure(0, weight=1)
+    settings_tabs.add(frame, text="Settings")
+    settings_tabs.add(status_tab, text="Status")
 
     current_row = 0
-
-    nb.Label(frame, text="EDMC-LogEventMiner", font=("TkDefaultFont", 10, "bold")).grid(
-        row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 4)
-    )
-    current_row += 1
 
     nb.Label(
         frame,
@@ -1222,7 +1477,7 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         ),
         wraplength=420,
         justify=tk.LEFT,
-    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 10))
     current_row += 1
 
     prefs_state.logging_enabled_var = tk.BooleanVar(value=_logging_enabled)
@@ -1230,6 +1485,14 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         frame,
         text="Enable journal logging",
         variable=prefs_state.logging_enabled_var,
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 4))
+    current_row += 1
+
+    prefs_state.status_logging_enabled_var = tk.BooleanVar(value=_status_change_logging_enabled)
+    nb.Checkbutton(
+        frame,
+        text="Enable status change logging",
+        variable=prefs_state.status_logging_enabled_var,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 4))
     current_row += 1
 
@@ -1567,13 +1830,107 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     overlay_color_entry.grid(row=3, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
     prefs_state.overlay_color_entry = overlay_color_entry
 
+    status_intro = nb.Label(
+        status_tab,
+        text="Checked statuses are tracked for status-change logging and status overlay output.",
+        wraplength=420,
+        justify=tk.LEFT,
+    )
+    status_intro.grid(row=0, column=0, sticky=tk.W, pady=(0, 6))
+
+    status_selection_group = tk.LabelFrame(status_tab, text="Tracked statuses")
+    status_selection_group.grid(row=1, column=0, sticky=tk.W + tk.E, pady=(0, 8))
+    status_selection_group.columnconfigure(0, weight=1)
+
+    status_checks = nb.Frame(status_selection_group)
+    status_checks.grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
+
+    prefs_state.status_track_vars = {}
+    columns = 2
+    rows_per_col = max(1, (len(_STATUS_FIELD_NAMES) + columns - 1) // columns)
+    for index, name in enumerate(_STATUS_FIELD_NAMES):
+        column = index // rows_per_col
+        row = index % rows_per_col
+        var = tk.BooleanVar(value=name in _tracked_status_keys)
+        prefs_state.status_track_vars[name] = var
+        nb.Checkbutton(status_checks, text=name, variable=var).grid(
+            row=row,
+            column=column,
+            sticky=tk.W,
+            padx=(0, 20 if column == 0 else 0),
+        )
+
+    status_overlay_group = tk.LabelFrame(status_tab, text="Status overlay")
+    status_overlay_group.grid(row=2, column=0, sticky=tk.W + tk.E)
+    status_overlay_group.columnconfigure(0, weight=1)
+    status_overlay_frame = nb.Frame(status_overlay_group)
+    status_overlay_frame.grid(row=0, column=0, sticky=tk.W + tk.E, padx=8, pady=6)
+    status_overlay_frame.columnconfigure(1, weight=1)
+
+    prefs_state.status_overlay_enabled_var = tk.BooleanVar(value=_status_overlay_enabled)
+
+    def _on_status_overlay_toggle() -> None:
+        _refresh_status_overlay_inputs()
+
+    nb.Checkbutton(
+        status_overlay_frame,
+        text="Enable status overlay",
+        variable=prefs_state.status_overlay_enabled_var,
+        command=_on_status_overlay_toggle,
+    ).grid(row=0, column=0, sticky=tk.W)
+
+    status_overlay_link = nb.Label(
+        status_overlay_frame,
+        text="(Get EDMCModernOverlay here)",
+        foreground="blue",
+        cursor="hand2",
+        font=("TkDefaultFont", 9, "underline"),
+    )
+    status_overlay_link.grid(row=0, column=1, sticky=tk.W, padx=(8, 0))
+    status_overlay_link.bind(
+        "<Button-1>",
+        lambda _event: webbrowser.open_new_tab("https://github.com/SweetJonnySauce/EDMCModernOverlay"),
+    )
+
+    nb.Label(status_overlay_frame, text="Lines:").grid(row=1, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.status_overlay_lines_var = tk.StringVar(value=str(_status_overlay_line_count))
+    status_overlay_lines_entry = nb.EntryMenu(
+        status_overlay_frame,
+        textvariable=prefs_state.status_overlay_lines_var,
+        width=6,
+    )
+    status_overlay_lines_entry.grid(row=1, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.status_overlay_lines_entry = status_overlay_lines_entry
+
+    nb.Label(status_overlay_frame, text="Font size:").grid(row=2, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.status_overlay_font_size_var = tk.StringVar(value=_status_overlay_font_size)
+    status_overlay_size_menu = nb.OptionMenu(
+        status_overlay_frame,
+        prefs_state.status_overlay_font_size_var,
+        _status_overlay_font_size,
+        *OVERLAY_FONT_SIZES,
+    )
+    status_overlay_size_menu.grid(row=2, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.status_overlay_font_menu = status_overlay_size_menu
+
+    nb.Label(status_overlay_frame, text="Text color:").grid(row=3, column=0, sticky=tk.W, pady=(4, 0))
+    prefs_state.status_overlay_color_var = tk.StringVar(value=_status_overlay_color)
+    status_overlay_color_entry = nb.EntryMenu(
+        status_overlay_frame,
+        textvariable=prefs_state.status_overlay_color_var,
+        width=12,
+    )
+    status_overlay_color_entry.grid(row=3, column=1, sticky=tk.W, padx=(8, 0), pady=(4, 0))
+    prefs_state.status_overlay_color_entry = status_overlay_color_entry
+
     current_row += 1
     _refresh_overlay_inputs()
+    _refresh_status_overlay_inputs()
 
     _populate_prefs_fields()
     _refresh_profile_menu()
 
-    return frame
+    return container
 
 
 def prefs_changed(cmdr: str, is_beta: bool) -> None:
@@ -1583,7 +1940,9 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
     _refresh_profile_menu()
     _populate_prefs_fields()
     _debug(
-        "Preferences updated profile=%s mode=%s ignored=%d included=%d payload=%s limit=%s journal_logging=%s forward_to_edmc=%s",
+        "Preferences updated profile=%s mode=%s ignored=%d included=%d payload=%s limit=%s "
+        "journal_logging=%s status_logging=%s tracked_statuses=%d forward_to_edmc=%s "
+        "journal_overlay=%s status_overlay=%s",
         _active_profile,
         settings_snapshot.get("filter_mode"),
         len(settings_snapshot.get("ignored_events", [])),
@@ -1591,7 +1950,11 @@ def prefs_changed(cmdr: str, is_beta: bool) -> None:
         settings_snapshot.get("include_payload"),
         settings_snapshot.get("payload_limit"),
         settings_snapshot.get("logging_enabled"),
+        settings_snapshot.get("status_change_logging_enabled"),
+        len(settings_snapshot.get("tracked_status_keys", [])),
         settings_snapshot.get("forward_to_edmc_log"),
+        _overlay_enabled,
+        settings_snapshot.get("status_overlay_enabled"),
     )
 
 
@@ -1639,3 +2002,18 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
         logger.info("Journal event %s: %s", event_name, payload)
     else:
         logger.info("Journal event %s", event_name)
+
+
+def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:
+    global _last_status_snapshot
+
+    snapshot = decode_status_snapshot(entry)
+    tracked = _tracked_status_names_ordered()
+    transitions = diff_status_snapshots(_last_status_snapshot, snapshot, tracked)
+
+    if _status_change_logging_enabled:
+        for transition in transitions:
+            _log_status_transition(transition)
+
+    _last_status_snapshot = snapshot
+    _refresh_status_overlay_lines()

@@ -1,5 +1,11 @@
 # Changelog
 
+## [1.6.0] - 2026-03-04
+- Added dashboard-driven status tracking with tracked-only status change logging.
+- Added a dedicated `Status` preferences tab with one checkbox per status (`checked = track`, `unchecked = ignore`).
+- Added profile-scoped status settings, including status logging toggle and status overlay settings.
+- Added a separate status overlay plugin group that renders current tracked status values.
+
 ## [1.5.0] - 2026-02-21
 - Added overlay support with animated scrolling, fade-in/out, and visual customization.
 

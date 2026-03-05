@@ -22,6 +22,9 @@ Display events in-game using [EDMCModernOverlay](https://github.com/SweetJonnySa
 - Adjust log location on the fly and optionally append the active profile name to the log file.
 - Rotate log files automatically with configurable thresholds per profile.
 - Overlay support using [EDMCModernOverlay](https://github.com/SweetJonnySauce/EDMCModernOverlay)
+- Optional status-change logging sourced from EDMC `dashboard_entry()` updates.
+- Dedicated `Status` settings tab with per-status tracking checkboxes, profile-scoped settings, and status overlay controls.
+- Separate status overlay group that renders current tracked status values (including mapped + raw `GuiFocus`).
 
 ## Installation
 
@@ -31,7 +34,7 @@ Display events in-game using [EDMCModernOverlay](https://github.com/SweetJonnySa
 
 ## Usage
 
-With EDMC running, every journal event from the game is echoed to both the main EDMC log and `EDMC-LogEventMiner.log` inside EDMC's log directory. Typical paths:
+With EDMC running, journal events are written to `EDMC-LogEventMiner.log` inside EDMC's log directory. Forwarding to the main EDMC log is optional. Typical paths:
 - Windows: `%LOCALAPPDATA%\EDMarketConnector\logs\`
 - macOS: `~/Library/Application Support/EDMarketConnector/logs/`
 - Linux: `~/.config/EDMarketConnector/logs/`
