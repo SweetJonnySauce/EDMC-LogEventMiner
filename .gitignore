@@ -1,2 +1,3 @@
 EDMC-LogEventMiner.code-workspace
 __pycache__/
+dist/

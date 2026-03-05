@@ -94,6 +94,7 @@ class OverlayManager:
         self._trim_after_animation = False
         self._last_rendered = 0
         self._group_registered = False
+        self._group_name = f"{plugin_name} Journal Events"
         self._missing_backend_logged = False
         self._disabled_skip_logged = False
         self._redraw_stop = threading.Event()
@@ -122,7 +123,7 @@ class OverlayManager:
             define_plugin_group(
                 plugin_group=self._plugin_name,
                 matching_prefixes=[self._id_prefix],
-                id_prefix_group=self._plugin_name,
+                id_prefix_group=self._group_name,
                 id_prefixes=[self._id_prefix],
                 id_prefix_group_anchor="sw",
                 id_prefix_offset_x=_ANCHOR_OFFSET_X,
@@ -131,7 +132,7 @@ class OverlayManager:
                 background_border_width=5,
             )
             self._group_registered = True
-            self._debug("plugin group registered (group=%s, prefix=%s)", self._plugin_name, self._id_prefix)
+            self._debug("plugin group registered (group=%s, prefix=%s)", self._group_name, self._id_prefix)
         except PluginGroupingError as exc:  # pragma: no cover - runtime specific
             self._debug("plugin group registration failed: %s", exc)
         except Exception as exc:  # pragma: no cover - defensive guard
@@ -492,7 +493,7 @@ class OverlayManager:
 class StatusOverlayManager:
     def __init__(self, plugin_name: str, logger: logging.Logger) -> None:
         self._plugin_name = plugin_name
-        self._group_name = f"{plugin_name}-status"
+        self._group_name = f"{plugin_name} Status Flags"
         self._logger = logger
         self._overlay = None
         self._config = OverlayConfig()
@@ -526,7 +527,7 @@ class StatusOverlayManager:
             return
         try:
             define_plugin_group(
-                plugin_group=self._group_name,
+                plugin_group=self._plugin_name,
                 matching_prefixes=[self._id_prefix],
                 id_prefix_group=self._group_name,
                 id_prefixes=[self._id_prefix],

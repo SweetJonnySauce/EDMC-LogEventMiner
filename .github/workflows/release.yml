@@ -23,7 +23,19 @@ jobs:
       - name: Build zip payload
         run: |
           mkdir -p dist/EDMC-LogEventMiner
-          cp load.py dist/EDMC-LogEventMiner/
+          cp ./*.py dist/EDMC-LogEventMiner/
+          cp VERSION dist/EDMC-LogEventMiner/
+          for dir in */; do
+            dir="${dir%/}"
+            case "$dir" in
+              dist|docs|scripts|tests|__pycache__)
+                continue
+                ;;
+            esac
+            if [ -f "$dir/__init__.py" ]; then
+              cp -R "$dir" dist/EDMC-LogEventMiner/
+            fi
+          done
           cd dist
           zip -r EDMC-LogEventMiner.zip EDMC-LogEventMiner
 
