@@ -3,7 +3,7 @@
 from __future__ import annotations
 
 from dataclasses import dataclass
-from datetime import datetime
+from datetime import datetime, timezone
 import logging
 import re
 import threading
@@ -904,4 +904,4 @@ def _format_time(timestamp: Optional[str]) -> str:
             return dt.strftime("%H:%M:%S")
         except Exception:
             pass
-    return datetime.utcnow().strftime("%H:%M:%S")
+    return datetime.now(timezone.utc).strftime("%H:%M:%S")
