@@ -32,6 +32,7 @@ from logeventminer_status import (
     diff_status_snapshots,
     format_status_value,
     normalize_tracked_statuses,
+    set_status_tracking_selection,
 )
 
 
@@ -1842,8 +1843,25 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
     status_selection_group.grid(row=1, column=0, sticky=tk.W + tk.E, pady=(0, 8))
     status_selection_group.columnconfigure(0, weight=1)
 
+    status_selection_actions = nb.Frame(status_selection_group)
+    status_selection_actions.grid(row=0, column=0, sticky=tk.W, padx=8, pady=(6, 0))
+
+    def _set_all_status_tracking(selected: bool) -> None:
+        set_status_tracking_selection(prefs_state.status_track_vars.values(), selected)
+
+    ttk.Button(
+        status_selection_actions,
+        text="Select All",
+        command=lambda: _set_all_status_tracking(True),
+    ).grid(row=0, column=0, sticky=tk.W)
+    ttk.Button(
+        status_selection_actions,
+        text="Select None",
+        command=lambda: _set_all_status_tracking(False),
+    ).grid(row=0, column=1, sticky=tk.W, padx=(6, 0))
+
     status_checks = nb.Frame(status_selection_group)
-    status_checks.grid(row=0, column=0, sticky=tk.W, padx=8, pady=6)
+    status_checks.grid(row=1, column=0, sticky=tk.W, padx=8, pady=6)
 
     prefs_state.status_track_vars = {}
     columns = 2
