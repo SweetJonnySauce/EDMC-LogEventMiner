@@ -9,6 +9,7 @@ from logeventminer_status import (
     diff_status_snapshots,
     format_status_value,
     normalize_tracked_statuses,
+    set_status_tracking_selection,
 )
 
 
@@ -87,3 +88,21 @@ def test_format_and_overlay_lines_include_guifocus_name_and_raw_value() -> None:
     assert lines[1] == "GuiFocus: GalaxyMap (6)"
     assert lines[2] == "GuiFocusGalaxyMap: On"
     assert format_status_value("Flags2.OnFoot", False) == "Off"
+
+
+class _FakeBooleanVar:
+    def __init__(self) -> None:
+        self.values: list[bool] = []
+
+    def set(self, value: bool) -> None:
+        self.values.append(value)
+
+
+def test_set_status_tracking_selection_updates_every_checkbox_variable() -> None:
+    variables = [_FakeBooleanVar(), _FakeBooleanVar(), _FakeBooleanVar()]
+
+    set_status_tracking_selection(variables, True)
+    set_status_tracking_selection(variables, False)
+    set_status_tracking_selection([], True)
+
+    assert [variable.values for variable in variables] == [[True, False]] * 3

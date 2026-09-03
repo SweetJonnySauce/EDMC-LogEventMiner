@@ -155,6 +155,13 @@ def normalize_tracked_statuses(raw: Any) -> set[str]:
     return result
 
 
+def set_status_tracking_selection(variables: Iterable[Any], selected: bool) -> None:
+    """Set every status checkbox variable to the requested tracking state."""
+
+    for variable in variables:
+        variable.set(selected)
+
+
 def _safe_int(value: Any, default: int) -> int:
     if isinstance(value, bool):
         return int(value)
