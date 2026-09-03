@@ -1,5 +1,8 @@
 # Changelog
 
+## [1.6.1] - 2026-09-03
+- Fixed the overlay timestamp fallback to use a timezone-aware UTC datetime.
+
 ## [1.6.0] - 2026-03-04
 - Added dashboard-driven status tracking with tracked-only status change logging.
 - Added a dedicated `Status` preferences tab with one checkbox per status (`checked = track`, `unchecked = ignore`).
