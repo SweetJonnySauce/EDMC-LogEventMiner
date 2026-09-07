@@ -13,6 +13,8 @@ from typing import Any, Dict, Iterable, Optional, Set
 import tkinter as tk
 from tkinter import filedialog, ttk
 
+from logeventminer_capi import CAPIMonitor
+
 try:
     from config import appname, config
     import myNotebook as nb
@@ -103,6 +105,8 @@ if not logger.hasHandlers():
     logger.addHandler(handler)
 logger.setLevel(logging.INFO)
 logger.propagate = False
+
+_capi_monitor = CAPIMonitor(logging.getLogger(appname))
 
 
 def _debug(message: str, *args: Any) -> None:
@@ -1426,6 +1430,7 @@ def plugin_start3(plugin_dir: str) -> str:
 
 def plugin_stop() -> None:
     global _edmc_forward_handler
+    _capi_monitor.close(restore_grab=False)
     logger.info("%s stopped", PLUGIN_NAME)
     if overlay_support is not None:
         overlay_support.shutdown()
@@ -1445,6 +1450,11 @@ def plugin_stop() -> None:
 
 def plugin_app(parent: tk.Frame) -> Optional[tk.Frame]:
     return None
+
+
+def _show_capi_monitor(parent: tk.Misc) -> None:
+    if not config.shutting_down:
+        _capi_monitor.show(parent)
 
 
 def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
@@ -1479,6 +1489,13 @@ def plugin_prefs(parent: nb.Notebook, cmdr: str, is_beta: bool) -> tk.Frame:
         wraplength=420,
         justify=tk.LEFT,
     ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(10, 10))
+    current_row += 1
+
+    nb.Button(
+        frame,
+        text="CAPI Monitor",
+        command=lambda: _show_capi_monitor(frame),
+    ).grid(row=current_row, column=0, columnspan=2, sticky=tk.W, padx=10, pady=(0, 10))
     current_row += 1
 
     prefs_state.logging_enabled_var = tk.BooleanVar(value=_logging_enabled)
@@ -2020,6 +2037,26 @@ def journal_entry(cmdr, is_beta, system, station, entry, state) -> None:
         logger.info("Journal event %s: %s", event_name, payload)
     else:
         logger.info("Journal event %s", event_name)
+
+
+def _receive_capi(source: str, data: Any, is_beta: Optional[bool] = None) -> None:
+    if not config.shutting_down:
+        _capi_monitor.receive(source, data, is_beta)
+
+
+def cmdr_data(data: Any, is_beta: bool) -> None:
+    """Display Live/Beta commander CAPI data received from EDMC."""
+    _receive_capi("cmdr_data", data, is_beta)
+
+
+def cmdr_data_legacy(data: Any, is_beta: bool) -> None:
+    """Display Legacy commander CAPI data received from EDMC."""
+    _receive_capi("cmdr_data_legacy", data, is_beta)
+
+
+def capi_fleetcarrier(data: Any) -> None:
+    """Display fleet-carrier CAPI data received from EDMC."""
+    _receive_capi("capi_fleetcarrier", data)
 
 
 def dashboard_entry(cmdr: str, is_beta: bool, entry: Dict[str, Any]) -> None:

@@ -1,5 +1,10 @@
 # Changelog
 
+## [Unreleased]
+- Added a CAPI Monitor button in settings that opens a resizable, scrollable JSON
+  viewer for EDMC commander and fleet-carrier callbacks, with bounded history
+  and a Close button.
+
 ## [1.6.1] - 2026-09-03
 - Fixed the overlay timestamp fallback to use a timezone-aware UTC datetime.
 

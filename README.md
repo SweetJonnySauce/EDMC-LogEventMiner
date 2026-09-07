@@ -27,6 +27,7 @@ Display events in-game using [EDMCModernOverlay](https://github.com/SweetJonnySa
 - Optional status-change logging sourced from EDMC `dashboard_entry()` updates.
 - Dedicated `Status` settings tab with per-status tracking checkboxes (including all `GuiFocus*` constants), profile-scoped settings, and status overlay controls.
 - Separate status overlay group that renders current tracked status values (including mapped + raw `GuiFocus`).
+- Resizable CAPI Monitor window for inspecting incoming commander and fleet-carrier data.
 
 ## Installation
 
@@ -40,6 +41,25 @@ With EDMC running, journal events are written to `EDMC-LogEventMiner.log` inside
 - Windows: `%LOCALAPPDATA%\EDMarketConnector\logs\`
 - macOS: `~/Library/Application Support/EDMarketConnector/logs/`
 - Linux: `~/.config/EDMarketConnector/logs/`
+
+### CAPI Monitor
+
+Open EDMC's settings, select this plugin's **Settings** tab, and click
+**CAPI Monitor**. A resizable, terminal-style window displays incoming CAPI
+callbacks as formatted JSON, labelled with the receipt time (UTC), callback name,
+source host, and beta flag where supplied. Unknown/new fields are included.
+
+Use EDMC's **Update** button to request fresh commander data. The monitor listens
+to Live/Beta, Legacy, and fleet-carrier updates that EDMC supplies; it does not
+fetch data itself or replay updates received before opening. Fleet-carrier data
+appears when EDMC delivers its separate callback.
+
+The window stays open when settings closes. Scroll to inspect previous output;
+scroll back to the bottom to follow incoming updates. Text can be selected and
+copied. History is held in memory while open, limited to two million characters
+with a visible notice when older output is discarded. **Close** or the window's
+close control stops monitoring and clears the history. Clicking **CAPI Monitor**
+again raises the existing window or opens a new session.
 
 ## TODO:
 - add auto updating capabilities
