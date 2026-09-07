@@ -223,3 +223,37 @@ def test_preferences_button_opens_monitor_and_survives_settings_close(plugin, ro
     assert '"received"' in text.get("1.0", "end")
     plugin.plugin_stop()
     assert not root.winfo_children()
+
+
+@pytest.mark.parametrize("scroll_method", ["scrollbar", "wheel"])
+def test_scrolling_up_near_bottom_of_large_report_stops_following(root, scroll_method):
+    monitor = CAPIMonitor(logging.getLogger("test.capi"))
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"rows": list(range(20_000))})
+    root.update_idletasks()
+    window = root.winfo_children()[0]
+    text = next(child for child in descendants(window) if isinstance(child, tk.Text))
+    text.see("end")
+    root.update_idletasks()
+    if scroll_method == "wheel":
+        if root.tk.call("tk", "windowingsystem") == "x11":
+            text.event_generate("<Button-4>", x=10, y=10)
+        else:
+            text.event_generate("<MouseWheel>", delta=120, x=10, y=10)
+    else:
+        scrollbar = next(child for child in descendants(window)
+                         if isinstance(child, ttk.Scrollbar)
+                         and str(child.cget("orient")) == "vertical")
+        root.tk.call(scrollbar.cget("command"), "scroll", -1, "units")
+    root.update_idletasks()
+    assert 0.99 < text.yview()[1] < 1
+    first_visible_line = text.index("@0,0")
+    for index in range(3):
+        monitor.receive("cmdr_data", {"update": index})
+        root.update_idletasks()
+        assert text.index("@0,0") == first_visible_line
+        assert text.yview()[1] < 1
+    text.see("end")
+    monitor.receive("cmdr_data", {"following_again": True})
+    assert text.yview()[1] == 1
+    monitor.close()

@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- Fixed CAPI Monitor snapping back to the bottom when reading near the end of a
+  large response; any upward scroll now pauses following new updates.
 - Added a CAPI Monitor button in settings that opens a resizable, scrollable JSON
   viewer for EDMC commander and fleet-carrier callbacks, with bounded history
   and a Close button.

@@ -1,0 +1,82 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+___ test_scrolling_up_near_bottom_of_large_report_stops_following[scrollbar] ___
+
+root = <tkinter.Tk object .>, scroll_method = 'scrollbar'
+
+    @pytest.mark.parametrize("scroll_method", ["scrollbar", "wheel"])
+    def test_scrolling_up_near_bottom_of_large_report_stops_following(root, scroll_method):
+        monitor = CAPIMonitor(logging.getLogger("test.capi"))
+        monitor.show(root)
+        monitor.receive("cmdr_data", {"rows": list(range(20_000))})
+        root.update_idletasks()
+        window = root.winfo_children()[0]
+        text = next(child for child in descendants(window) if isinstance(child, tk.Text))
+        text.see("end")
+        root.update_idletasks()
+        if scroll_method == "wheel":
+            if root.tk.call("tk", "windowingsystem") == "x11":
+                text.event_generate("<Button-4>", x=10, y=10)
+            else:
+                text.event_generate("<MouseWheel>", delta=120, x=10, y=10)
+        else:
+            scrollbar = next(child for child in descendants(window)
+                             if isinstance(child, ttk.Scrollbar)
+                             and str(child.cget("orient")) == "vertical")
+            root.tk.call(scrollbar.cget("command"), "scroll", -1, "units")
+        root.update_idletasks()
+        assert 0.99 < text.yview()[1] < 1
+        first_visible_line = text.index("@0,0")
+        for index in range(3):
+            monitor.receive("cmdr_data", {"update": index})
+            root.update_idletasks()
+>           assert text.index("@0,0") == first_visible_line
+E           AssertionError: assert '19986.0' == '19980.0'
+E             - 19980.0
+E             ?     ^
+E             + 19986.0
+E             ?     ^
+
+tests/test_logeventminer_capi.py:254: AssertionError
+_____ test_scrolling_up_near_bottom_of_large_report_stops_following[wheel] _____
+
+root = <tkinter.Tk object .>, scroll_method = 'wheel'
+
+    @pytest.mark.parametrize("scroll_method", ["scrollbar", "wheel"])
+    def test_scrolling_up_near_bottom_of_large_report_stops_following(root, scroll_method):
+        monitor = CAPIMonitor(logging.getLogger("test.capi"))
+        monitor.show(root)
+        monitor.receive("cmdr_data", {"rows": list(range(20_000))})
+        root.update_idletasks()
+        window = root.winfo_children()[0]
+        text = next(child for child in descendants(window) if isinstance(child, tk.Text))
+        text.see("end")
+        root.update_idletasks()
+        if scroll_method == "wheel":
+            if root.tk.call("tk", "windowingsystem") == "x11":
+                text.event_generate("<Button-4>", x=10, y=10)
+            else:
+                text.event_generate("<MouseWheel>", delta=120, x=10, y=10)
+        else:
+            scrollbar = next(child for child in descendants(window)
+                             if isinstance(child, ttk.Scrollbar)
+                             and str(child.cget("orient")) == "vertical")
+            root.tk.call(scrollbar.cget("command"), "scroll", -1, "units")
+        root.update_idletasks()
+        assert 0.99 < text.yview()[1] < 1
+        first_visible_line = text.index("@0,0")
+        for index in range(3):
+            monitor.receive("cmdr_data", {"update": index})
+            root.update_idletasks()
+>           assert text.index("@0,0") == first_visible_line
+E           AssertionError: assert '19986.0' == '19978.0'
+E             - 19978.0
+E             ?    -
+E             + 19986.0
+E             ?     +
+
+tests/test_logeventminer_capi.py:254: AssertionError
+=========================== short test summary info ============================
+FAILED tests/test_logeventminer_capi.py::test_scrolling_up_near_bottom_of_large_report_stops_following[scrollbar]
+FAILED tests/test_logeventminer_capi.py::test_scrolling_up_near_bottom_of_large_report_stops_following[wheel]
+2 failed, 9 deselected in 0.61s

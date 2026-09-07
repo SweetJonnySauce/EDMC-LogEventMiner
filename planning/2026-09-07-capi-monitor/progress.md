@@ -51,3 +51,22 @@
 ### Commit
 Implementation and verification complete. Local commit:
 `feat: add CAPI monitor window`. No remote push requested.
+
+## Phase 4 — Completed
+- [x] 4.1 Reproduced the user's scrolling failure with a 20,000-row report,
+  using both a real Tk scrollbar command and a Linux wheel event. Both tests
+  failed when new data arrived: the top visible line jumped to the bottom.
+- [x] 4.2 Changed tail-follow detection from the bottom 1% of the buffer to
+  the actual end (`yview()[1] == 1.0`). Even a one-line upward scroll now
+  preserves the viewport through repeated updates. Scrolling back to the end
+  resumes following. Targeted scrolling tests: 3 passed.
+- [x] 4.3 Full headless suite: 12 passed, 7 display-dependent skips. Full suite
+  with local Tk display access: 19 passed. SemVer and git diff checks passed.
+  Updated Unreleased changelog. No new runtime dependencies or UI hooks.
+
+Compliance: core Windows baseline remains untested here (No); supported API,
+logging/versioning, main-thread responsiveness, and preferences/UI comply for
+this change (Yes). Existing directory-naming packaging exception remains (No).
+No network, config, lifecycle, or payload-format behavior changed.
+
+Local fix commit: `fix: preserve CAPI monitor scroll position near the bottom`.

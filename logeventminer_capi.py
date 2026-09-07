@@ -105,7 +105,9 @@ class CAPIMonitor:
         text = self._text
         if text is None:
             return
-        follow_tail = text.yview()[1] >= 0.99
+        # A percentage tolerance spans many lines in large CAPI reports.
+        # Even a one-line upward scroll must stop following new data.
+        follow_tail = text.yview()[1] == 1.0
         text.configure(state="normal")
         try:
             # Avoid inserting an arbitrarily large payload into Tk in one go.
