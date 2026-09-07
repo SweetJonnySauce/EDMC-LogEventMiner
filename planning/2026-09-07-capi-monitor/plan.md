@@ -7,6 +7,7 @@
 | 2 | Tests and implementation | Completed |
 | 3 | Validation and documentation | Completed |
 | 4 | Fix scrolling through large CAPI reports | Completed |
+| 5 | Stop unsolicited scrolling and expose explicit follow control | Completed |
 
 ## Phase 1
 | Stage | Description | Status |
@@ -55,3 +56,28 @@ selection/copy, bounded history, and following when actually at the end.
 
 Commands: focused scrolling tests with display access, full headless and GUI
 pytest suites, `python3 scripts/verify_semver.py`, and `git diff --check`.
+
+## Phase 5
+User now reports slow upward movement without input. Our own code has no idle
+timer. Tk's native Text selection binding starts a repeating TextAutoScan on
+B1-Leave; a lost release can keep scrolling without CAPI updates. Reproduce this
+path with real Tk events; do not assume it is proven to be the user's exact cause.
+
+Add a per-window `Follow latest` checkbox, off by default, as an explicit escape
+hatch. When off, incoming data must preserve the viewed text; when on, follow
+only from the actual bottom (retain phase 4's manual-scroll protection). Enabling
+it jumps to the latest data. Reopening starts with following off.
+Disable only this viewer's out-of-bounds drag auto-scan, preserving text selection,
+copy, wheel, keyboard and scrollbar navigation. Do not change global Tk bindings.
+Ensure cursor/selection cannot create periodic redraw work in this read-only view.
+
+| Stage | Description | Status |
+| --- | --- | --- |
+| 5.1 | Add failing idle-selection and explicit-follow regression tests | Completed |
+| 5.2 | Implement local selection guard and per-window follow control | Completed |
+| 5.3 | Run real Tk/full suites, update usage and validation notes | Completed |
+
+Validation: GUI tests with a large report, simulated selection leaving its bounds,
+an actual idle event loop, explicit checkbox transitions, repeated data appends,
+selection preservation, and existing wheel/scrollbar tests. Full headless and GUI
+pytest, SemVer, syntax, and diff checks. Existing missing project tools remain skipped.

@@ -70,3 +70,30 @@ this change (Yes). Existing directory-naming packaging exception remains (No).
 No network, config, lifecycle, or payload-format behavior changed.
 
 Local fix commit: `fix: preserve CAPI monitor scroll position near the bottom`.
+
+## Phase 5 — Completed
+- [x] 5.1 Reproduced independent upward movement in a real Tk window by selecting
+  text and generating Leave with button 1 held. Tk's TextAutoScan moved the
+  viewport immediately and continued through an idle event loop without CAPI
+  updates. This demonstrates a cause of the reported symptom; it does not prove
+  the exact input sequence in the user's running session.
+- [x] 5.2 Scoped a B1-Leave guard to this viewer only, preserving normal selection
+  within the text and wheel/scrollbar/keyboard navigation. No global bindings or
+  Tk internal state modified. Disabled cursor blinking and implicit X11 PRIMARY
+  selection export so external selection ownership does not clear the viewer's
+  highlight; explicit copy shortcuts remain native Tk behavior.
+  Added Follow latest, off on every open. Enabling it jumps to the end and follows
+  new data only while actually at the bottom. Disabling it keeps reading position.
+- [x] 5.3 Targeted regression tests passed; full headless suite: 12 passed,
+  9 display-dependent skips. Full real Tk suite: **21 passed**, no skips.
+  Tests cover an idle event loop, preserved selection/viewport, opt-in following,
+  stop/resume, reopening defaults, and prior near-bottom/manual navigation.
+  SemVer and diff checks passed. README and Unreleased changelog updated.
+
+Compliance for phase 5: supported APIs, logging, main-thread responsiveness and
+preferences/UI are Yes for this change; no persistence or background work added.
+Core Windows baseline remains untested (No), and the existing hyphenated plugin
+directory still conflicts with the repository packaging rule (No). These existing
+release checks require separate validation; this is a development fix.
+
+Local commit: `fix: stop idle selection scrolling in CAPI monitor`.

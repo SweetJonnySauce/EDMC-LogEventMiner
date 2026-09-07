@@ -37,6 +37,7 @@ class CAPIMonitor:
         self._max_chars = max(1000, max_chars)
         self._window: tk.Toplevel | None = None
         self._text: tk.Text | None = None
+        self._follow_latest: tk.BooleanVar | None = None
         self._previous_grab: tk.Misc | None = None
 
     def show(self, parent: tk.Misc) -> None:
@@ -69,24 +70,39 @@ class CAPIMonitor:
         text = tk.Text(
             window, wrap="none", font="TkFixedFont", background="#141414",
             foreground="#e6e6e6", insertbackground="#e6e6e6",
+            insertofftime=0,
             selectbackground="#345578", selectforeground="#ffffff",
-            state="disabled", padx=8, pady=8,
+            state="disabled", exportselection=False, padx=8, pady=8,
         )
         self._text = text
+        # Tk's class binding starts a repeating selection auto-scan on leaving
+        # with button 1 held. A lost release can scroll this viewer indefinitely.
+        # Keep selection within the text and use explicit navigation to scroll.
+        text.bind("<B1-Leave>", lambda event: "break")
         text.grid(row=0, column=0, sticky="nsew")
         vertical = ttk.Scrollbar(window, orient="vertical", command=text.yview)
         vertical.grid(row=0, column=1, sticky="ns")
         horizontal = ttk.Scrollbar(window, orient="horizontal", command=text.xview)
         horizontal.grid(row=1, column=0, sticky="ew")
         text.configure(yscrollcommand=vertical.set, xscrollcommand=horizontal.set)
-        ttk.Button(window, text="Close", command=self.close).grid(
-            row=2, column=0, columnspan=2, sticky="e", padx=10, pady=10
-        )
+        controls = ttk.Frame(window)
+        controls.grid(row=2, column=0, columnspan=2, sticky="ew", padx=10, pady=10)
+        controls.columnconfigure(0, weight=1)
+        self._follow_latest = tk.BooleanVar(master=window, value=False)
+        ttk.Checkbutton(
+            controls, text="Follow latest", variable=self._follow_latest,
+            command=self._change_follow_latest,
+        ).grid(row=0, column=0, sticky="w")
+        ttk.Button(controls, text="Close", command=self.close).grid(row=0, column=1)
         self._append(
             "Listening for new CAPI data from EDMC...\n"
             "Use EDMC's Update button to request fresh commander data.\n"
             "Live, Legacy, and fleet-carrier callbacks appear here when received.\n\n"
         )
+
+    def _change_follow_latest(self) -> None:
+        if self._follow_latest is not None and self._follow_latest.get() and self._text is not None:
+            self._text.see("end")
 
     def receive(
         self, source: str, data: Mapping[str, Any], is_beta: bool | None = None
@@ -107,7 +123,11 @@ class CAPIMonitor:
             return
         # A percentage tolerance spans many lines in large CAPI reports.
         # Even a one-line upward scroll must stop following new data.
-        follow_tail = text.yview()[1] == 1.0
+        follow_tail = (
+            self._follow_latest is not None
+            and self._follow_latest.get()
+            and text.yview()[1] == 1.0
+        )
         text.configure(state="normal")
         try:
             # Avoid inserting an arbitrarily large payload into Tk in one go.
@@ -130,6 +150,7 @@ class CAPIMonitor:
         previous_grab = self._previous_grab
         self._window = None
         self._text = None
+        self._follow_latest = None
         self._previous_grab = None
         if window is not None:
             window.destroy()
@@ -145,4 +166,5 @@ class CAPIMonitor:
         if event.widget is self._window:
             self._window = None
             self._text = None
+            self._follow_latest = None
             self._previous_grab = None

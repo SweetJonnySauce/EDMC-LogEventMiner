@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- Added an opt-in Follow latest control to CAPI Monitor and disabled selection
+  drag auto-scrolling outside its text area to prevent uncontrolled movement.
 - Fixed CAPI Monitor snapping back to the bottom when reading near the end of a
   large response; any upward scroll now pauses following new updates.
 - Added a CAPI Monitor button in settings that opens a resizable, scrollable JSON

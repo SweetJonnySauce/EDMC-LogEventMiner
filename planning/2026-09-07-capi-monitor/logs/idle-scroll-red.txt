@@ -1,0 +1,46 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+_____ test_dragging_selection_outside_viewer_does_not_start_idle_scrolling _____
+
+root = <tkinter.Tk object .>
+
+    def test_dragging_selection_outside_viewer_does_not_start_idle_scrolling(root):
+        monitor = CAPIMonitor(logging.getLogger("test.capi"))
+        monitor.show(root)
+        monitor.receive("cmdr_data", {"rows": list(range(2000))})
+        root.update()
+        text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+        text.yview_moveto(0.5)
+        root.update()
+        text.event_generate("<ButtonPress-1>", x=20, y=60)
+        text.event_generate("<Motion>", state=0x100, x=90, y=90)
+        assert text.tag_ranges("sel")
+        first_line = text.index("@0,0")
+        viewport = text.yview()
+        try:
+            # Reproduce a drag leaving the window without a delivered release.
+            text.event_generate("<Leave>", state=0x100, x=20, y=-10)
+>           assert text.yview() == viewport
+E           assert (0.4996928657...7570714014099) == (0.5000146254...0788311346418)
+E             At index 0 diff: 0.4996928657091877 != 0.5000146254424196
+E             Use -v to get more diff
+
+tests/test_logeventminer_capi.py:282: AssertionError
+_______________ test_follow_latest_is_opt_in_and_can_be_stopped ________________
+
+root = <tkinter.Tk object .>
+
+    def test_follow_latest_is_opt_in_and_can_be_stopped(root):
+        monitor = CAPIMonitor(logging.getLogger("test.capi"))
+        monitor.show(root)
+        root.update_idletasks()
+        text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+>       follow = next(child for child in descendants(root) if isinstance(child, ttk.Checkbutton)
+                      and child.cget("text") == "Follow latest")
+E       StopIteration
+
+tests/test_logeventminer_capi.py:298: StopIteration
+=========================== short test summary info ============================
+FAILED tests/test_logeventminer_capi.py::test_dragging_selection_outside_viewer_does_not_start_idle_scrolling
+FAILED tests/test_logeventminer_capi.py::test_follow_latest_is_opt_in_and_can_be_stopped
+2 failed, 11 deselected in 0.74s

@@ -196,6 +196,8 @@ def test_oversized_report_is_visibly_truncated_and_invalid_data_is_reported(root
 def test_new_data_does_not_interrupt_scrolling_through_previous_output(root):
     monitor = CAPIMonitor(logging.getLogger("test.capi"))
     monitor.show(root)
+    next(child for child in descendants(root) if isinstance(child, ttk.Checkbutton)
+         and child.cget("text") == "Follow latest").invoke()
     monitor.receive("cmdr_data", {"rows": list(range(200))})
     root.update_idletasks()
     window = root.winfo_children()[0]
@@ -229,6 +231,8 @@ def test_preferences_button_opens_monitor_and_survives_settings_close(plugin, ro
 def test_scrolling_up_near_bottom_of_large_report_stops_following(root, scroll_method):
     monitor = CAPIMonitor(logging.getLogger("test.capi"))
     monitor.show(root)
+    next(child for child in descendants(root) if isinstance(child, ttk.Checkbutton)
+         and child.cget("text") == "Follow latest").invoke()
     monitor.receive("cmdr_data", {"rows": list(range(20_000))})
     root.update_idletasks()
     window = root.winfo_children()[0]
@@ -256,4 +260,61 @@ def test_scrolling_up_near_bottom_of_large_report_stops_following(root, scroll_m
     text.see("end")
     monitor.receive("cmdr_data", {"following_again": True})
     assert text.yview()[1] == 1
+    monitor.close()
+
+
+def test_dragging_selection_outside_viewer_does_not_start_idle_scrolling(root):
+    monitor = CAPIMonitor(logging.getLogger("test.capi"))
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"rows": list(range(2000))})
+    root.update()
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    text.yview_moveto(0.5)
+    root.update()
+    text.event_generate("<ButtonPress-1>", x=20, y=60)
+    text.event_generate("<Motion>", state=0x100, x=90, y=90)
+    assert text.tag_ranges("sel")
+    first_line = text.index("@0,0")
+    viewport = text.yview()
+    try:
+        # Reproduce a drag leaving the window without a delivered release.
+        text.event_generate("<Leave>", state=0x100, x=20, y=-10)
+        assert text.yview() == viewport
+        finished = tk.BooleanVar(master=root, value=False)
+        root.after(250, lambda: finished.set(True))
+        root.wait_variable(finished)
+        assert text.index("@0,0") == first_line
+        assert text.tag_ranges("sel")
+    finally:
+        text.event_generate("<ButtonRelease-1>", x=20, y=20)
+        monitor.close()
+
+
+def test_follow_latest_is_opt_in_and_can_be_stopped(root):
+    monitor = CAPIMonitor(logging.getLogger("test.capi"))
+    monitor.show(root)
+    root.update_idletasks()
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    follow = next(child for child in descendants(root) if isinstance(child, ttk.Checkbutton)
+                  and child.cget("text") == "Follow latest")
+    assert not follow.instate(["selected"])
+    monitor.receive("cmdr_data", {"rows": list(range(2000))})
+    root.update_idletasks()
+    assert text.index("@0,0") == "1.0"
+    follow.invoke()
+    assert text.yview()[1] == 1
+    monitor.receive("cmdr_data", {"following": True})
+    assert text.yview()[1] == 1
+    follow.invoke()
+    first_line = text.index("@0,0")
+    for index in range(5):
+        monitor.receive("cmdr_data", {"paused": index})
+        root.update_idletasks()
+        assert text.index("@0,0") == first_line
+    assert str(text.cget("state")) == "disabled"
+    monitor.close()
+    monitor.show(root)
+    follow = next(child for child in descendants(root) if isinstance(child, ttk.Checkbutton)
+                  and child.cget("text") == "Follow latest")
+    assert not follow.instate(["selected"])
     monitor.close()
