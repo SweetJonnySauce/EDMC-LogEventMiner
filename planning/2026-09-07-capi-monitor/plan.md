@@ -8,6 +8,7 @@
 | 3 | Validation and documentation | Completed |
 | 4 | Fix scrolling through large CAPI reports | Completed |
 | 5 | Stop unsolicited scrolling and expose explicit follow control | Completed |
+| 6 | JSON syntax colors and viewport breadcrumb | Completed |
 
 ## Phase 1
 | Stage | Description | Status |
@@ -81,3 +82,39 @@ Validation: GUI tests with a large report, simulated selection leaving its bound
 an actual idle event loop, explicit checkbox transitions, repeated data appends,
 selection preservation, and existing wheel/scrollbar tests. Full headless and GUI
 pytest, SemVer, syntax, and diff checks. Existing missing project tools remain skipped.
+
+## Phase 6
+Add syntax colors for JSON keys, string values, numbers, booleans/null and
+punctuation. A fixed-height breadcrumb above the text reports the callback and
+JSON path at the first visible line, including array indexes. It updates only
+on scrolling, resize, or received data; no idle polling or new automatic scrolling.
+Multiple reports retain separate source labels. Keys with escaping/Unicode and
+truncated history must preserve accurate paths and colors. Error/waiting text
+stays readable without being parsed as JSON. Keep selection, copy, Close,
+Follow latest defaults, and all earlier scrolling fixes.
+
+Use a new pure `logeventminer_json.py` module to scan already formatted JSON,
+producing token spans and a per-line path index. Crop presentation metadata along
+with text so deleted parents do not lose retained child paths. Tk applies tags
+only to appended text, in batches, and retains a bounded per-line breadcrumb
+index. Convert Python character positions for Tk's Unicode column convention.
+Performance probe: indexing/coloring 1.5 MB initially took 1.7 seconds; eliminating
+duplicate spans and redundant punctuation tags reduced it to about one second.
+Prepare reports over 250,000 characters on one worker using the already serialized,
+immutable text. Poll only while work is pending; all Tk operations stay on the
+main thread. Preserve report order, cancel pending work on close and join on plugin
+shutdown. Test deferred delivery and cancellation explicitly.
+The breadcrumb is a readonly single-line field with fixed requested width so
+long paths cannot resize the window or cause redraw/scroll feedback.
+
+| Stage | Description | Status |
+| --- | --- | --- |
+| 6.1 | Add pure lexer/path/cropping and GUI breadcrumb/color tests | Completed |
+| 6.2 | Implement pure JSON presentation module and Tk integration | Completed |
+| 6.3 | Verify full suites, large-payload responsiveness and docs | Completed |
+
+Tests: nested objects/arrays, empty containers, escaped keys, booleans/null,
+negative/exponent numbers, non-BMP Unicode tag offsets, viewport movement,
+multiple callbacks, cropping through a token/line, and close/reopen reset.
+Run focused pure tests and GUI tests, then full headless/GUI suites, SemVer and
+syntax/diff checks. Probe large-payload processing and prevent per-token Tcl calls.

@@ -1,0 +1,34 @@
+FF                                                                       [100%]
+=================================== FAILURES ===================================
+__________ test_json_colors_and_breadcrumb_follow_visible_nested_data __________
+
+root = <tkinter.Tk object .>
+
+    def test_json_colors_and_breadcrumb_follow_visible_nested_data(root):
+        monitor = CAPIMonitor(logging.getLogger("test.capi"))
+        monitor.show(root)
+        monitor.receive("cmdr_data", {"items": [{"name": "A😀", "price": 12, "active": True}] * 100})
+        root.update_idletasks()
+        text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+>       breadcrumb = next(child for child in descendants(root) if isinstance(child, ttk.Entry))
+E       StopIteration
+
+tests/test_logeventminer_capi.py:324: StopIteration
+____ test_json_tags_handle_unicode_and_breadcrumb_survives_history_trimming ____
+
+root = <tkinter.Tk object .>
+
+    def test_json_tags_handle_unicode_and_breadcrumb_survives_history_trimming(root):
+        monitor = CAPIMonitor(logging.getLogger("test.capi"), max_chars=2000)
+        monitor.show(root)
+        monitor.receive("cmdr_data", {"😀key": "value😀", "rows": [{"leaf": i} for i in range(300)]})
+        root.update_idletasks()
+        text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+>       breadcrumb = next(child for child in descendants(root) if isinstance(child, ttk.Entry))
+E       StopIteration
+
+tests/test_logeventminer_capi.py:352: StopIteration
+=========================== short test summary info ============================
+FAILED tests/test_logeventminer_capi.py::test_json_colors_and_breadcrumb_follow_visible_nested_data
+FAILED tests/test_logeventminer_capi.py::test_json_tags_handle_unicode_and_breadcrumb_survives_history_trimming
+2 failed, 13 deselected in 0.38s

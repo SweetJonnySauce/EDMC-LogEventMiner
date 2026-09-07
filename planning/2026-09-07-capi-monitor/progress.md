@@ -97,3 +97,49 @@ directory still conflicts with the repository packaging rule (No). These existin
 release checks require separate validation; this is a development fix.
 
 Local commit: `fix: stop idle selection scrolling in CAPI monitor`.
+
+## Phase 6 — Completed
+- [x] 6.1 Added pure JSON token/path/cropping tests before implementation, and
+  real Tk tests for syntax colors, viewport breadcrumbs, multi-report sources,
+  Unicode tag columns, history trimming, deferred delivery and close cancellation.
+- [x] 6.2 Added `logeventminer_json.py` with an iterative scanner over serialized
+  JSON. Unknown fields and field order are preserved. Per-line paths survive
+  prefix removal, including when an ancestor no longer appears in retained text.
+  Tk tags color keys, strings, numbers and literals; punctuation uses the default
+  text color. Headers are dimmed. The fixed-height readonly breadcrumb follows
+  the top visible line, includes callback source and array indexes, and can be
+  horizontally scrolled/selected for long paths. No idle polling or scroll moves
+  are caused by breadcrumb updates. Existing Follow latest behavior is preserved.
+- [x] 6.3 Validated tests, performance, syntax and release payload inclusion;
+  updated README and Unreleased changelog. User explicitly requested **no commit**.
+
+### Phase 6 validation
+- Full headless suite with warnings as errors: **17 passed, 13 skipped** because
+  sandboxed Tk cannot access the display.
+- Full GUI-enabled suite with warnings as errors: **30 passed**, no skips or
+  warnings, 1.84 seconds (logs/json-full-gui.txt).
+- Large synthetic report: 1,499,536 retained characters. Initial synchronous
+  processing took 1.7 seconds; after batching/avoiding duplicate work and moving
+  large-report indexing to a data-only worker, the callback took **0.084 seconds**
+  and main-thread display insertion/coloring took **0.282 seconds**. The completion
+  timer was absent after delivery. Worker input is immutable serialized text;
+  all widget operations occur on the main thread. Reports retain arrival order.
+- Test fixture now collects destroyed Tk objects on the main thread between tests
+  to prevent worker-triggered GC from disposing of old Tcl variables off-thread.
+- SemVer and diff checks passed. Native screenshot capture of a synthetic preview
+  failed with X11 GetImage error 8; real Tk widget/layout/color assertions passed.
+- No live authenticated CAPI payloads were used for validation.
+
+### Phase 6 compliance
+| Requirement group | Yes/No | Evidence / remaining work |
+| --- | --- | --- |
+| Core alignment | No (release verification incomplete) | Documented baseline was verified earlier in this session; Windows 3.13.9 runtime and release/discussion monitoring still require release checks. |
+| Supported API/settings | Yes for this change | No new EDMC imports, HTTP usage, config keys, or private CAPI properties. |
+| Logging/versioning | Yes for this change | Worker failures use logger.exception; VERSION unchanged with Unreleased notes. |
+| Responsive/Tk-safe | Yes for this change | Heavy JSON indexing uses one worker for large reports; completion and all Tk calls stay on main thread; pending timers cancelled on close and active worker joined on plugin stop. |
+| Preferences/UI | Yes for this change | Existing myNotebook preferences button preserved; viewer-only Tk/ttk changes, no settings persistence or numeric preferences. |
+| Dependencies/debug HTTP | No (existing directory convention) | Standard-library module included by existing packaging rule; no HTTP. Existing hyphenated directory still conflicts with AGENTS.md's namespace rule and requires separate compatibility work. |
+
+User subsequently authorized committing phase 6. Pre-commit verification:
+`python3 -m pytest -q -W error` with GUI access: **30 passed** in 2.01 seconds;
+SemVer validation and `git diff --check` passed.

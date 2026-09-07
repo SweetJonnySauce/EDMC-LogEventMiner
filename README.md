@@ -49,6 +49,12 @@ Open EDMC's settings, select this plugin's **Settings** tab, and click
 callbacks as formatted JSON, labelled with the receipt time (UTC), callback name,
 source host, and beta flag where supplied. Unknown/new fields are included.
 
+JSON keys, strings, numbers, and boolean/null values use distinct colors. The
+breadcrumb above the output shows the callback and JSON path at the top of the
+visible text, for example `cmdr_data › $ › lastStarport › commodities › [12] › name`.
+It follows scrolling and includes array indexes. Long paths can be scrolled or
+selected in the breadcrumb field. Large reports are prepared in the background.
+
 Use EDMC's **Update** button to request fresh commander data. The monitor listens
 to Live/Beta, Legacy, and fleet-carrier updates that EDMC supplies; it does not
 fetch data itself or replay updates received before opening. Fleet-carrier data

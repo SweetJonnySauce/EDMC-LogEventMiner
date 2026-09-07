@@ -1,6 +1,8 @@
 # Changelog
 
 ## [Unreleased]
+- Added JSON syntax colors and a viewport breadcrumb to CAPI Monitor, with
+  background indexing for large reports and paths preserved through history trimming.
 - Added an opt-in Follow latest control to CAPI Monitor and disabled selection
   drag auto-scrolling outside its text area to prevent uncontrolled movement.
 - Fixed CAPI Monitor snapping back to the bottom when reading near the end of a

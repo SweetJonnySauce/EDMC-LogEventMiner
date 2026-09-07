@@ -1,0 +1,15 @@
+
+==================================== ERRORS ====================================
+______________ ERROR collecting tests/test_logeventminer_json.py _______________
+ImportError while importing test module '/home/jon/.local/share/EDMarketConnector/plugins/EDMC-LogEventMiner/tests/test_logeventminer_json.py'.
+Hint: make sure your test modules/packages have valid Python names.
+Traceback:
+/usr/lib/python3.12/importlib/__init__.py:90: in import_module
+    return _bootstrap._gcd_import(name[level:], package, level)
+tests/test_logeventminer_json.py:3: in <module>
+    from logeventminer_json import analyze_json, format_json_path
+E   ModuleNotFoundError: No module named 'logeventminer_json'
+=========================== short test summary info ============================
+ERROR tests/test_logeventminer_json.py
+!!!!!!!!!!!!!!!!!!!! Interrupted: 1 error during collection !!!!!!!!!!!!!!!!!!!!
+1 error in 0.06s

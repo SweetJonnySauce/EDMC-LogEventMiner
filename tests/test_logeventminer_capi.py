@@ -1,6 +1,7 @@
 from collections import UserDict
 from copy import deepcopy
 from datetime import datetime, timezone
+import gc
 import importlib.util
 import json
 import logging
@@ -10,6 +11,7 @@ from types import SimpleNamespace
 import tkinter as tk
 from tkinter import ttk
 from unittest.mock import Mock
+import threading
 
 import pytest
 
@@ -112,6 +114,9 @@ def root():
         window.destroy()
     except tk.TclError:
         pass
+    # Dispose of destroyed Tcl variables on the main thread before later tests
+    # start a JSON worker that could otherwise trigger cyclic garbage collection.
+    gc.collect()
 
 
 def descendants(widget):
@@ -317,4 +322,106 @@ def test_follow_latest_is_opt_in_and_can_be_stopped(root):
     follow = next(child for child in descendants(root) if isinstance(child, ttk.Checkbutton)
                   and child.cget("text") == "Follow latest")
     assert not follow.instate(["selected"])
+    monitor.close()
+
+
+def test_json_colors_and_breadcrumb_follow_visible_nested_data(root):
+    monitor = CAPIMonitor(logging.getLogger("test.capi"))
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"items": [{"name": "A😀", "price": 12, "active": True}] * 100})
+    root.update_idletasks()
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    breadcrumb = next(child for child in descendants(root) if isinstance(child, ttk.Entry))
+    assert str(breadcrumb.cget("state")) == "readonly"
+    key_index = text.search('"name"', "1.0")
+    value_index = text.search('"A😀"', "1.0")
+    assert "json_key" in text.tag_names(key_index)
+    assert "json_string" in text.tag_names(value_index)
+    assert "json_number" in text.tag_names(text.search("12,", "1.0"))
+    assert "json_literal" in text.tag_names(text.search("true", "1.0"))
+    text.yview(f"{key_index} linestart")
+    root.update_idletasks()
+    assert breadcrumb.get() == "cmdr_data › $ › items › [0] › name"
+    first_line = text.index("@0,0")
+    monitor.receive("capi_fleetcarrier", {"crew": list(range(100))})
+    root.update_idletasks()
+    assert text.index("@0,0") == first_line
+    assert breadcrumb.get().startswith("cmdr_data ›")
+    text.yview(text.search('"crew"', "1.0"))
+    root.update_idletasks()
+    assert breadcrumb.get() == "capi_fleetcarrier › $ › crew"
+    monitor.close()
+
+
+def test_json_tags_handle_unicode_and_breadcrumb_survives_history_trimming(root):
+    monitor = CAPIMonitor(logging.getLogger("test.capi"), max_chars=2000)
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"😀key": "value😀", "rows": [{"leaf": i} for i in range(300)]})
+    root.update_idletasks()
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    breadcrumb = next(child for child in descendants(root) if isinstance(child, ttk.Entry))
+    leaf = text.search('"leaf"', "1.0")
+    text.yview(f"{leaf} linestart")
+    root.update_idletasks()
+    assert breadcrumb.get().startswith("cmdr_data › $ › rows › [")
+    assert breadcrumb.get().endswith(" › leaf")
+    assert "json_key" in text.tag_names(leaf)
+    monitor.close()
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"😀key": "value😀"})
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    value = text.search('"value😀"', "1.0")
+    assert "json_string" in text.tag_names(value)
+    ranges = text.tag_ranges("json_string")
+    assert text.get(ranges[0], ranges[1]) == '"value😀"'
+    monitor.close()
+
+
+def test_large_json_preparation_is_off_thread_and_delivery_is_ordered(root, monkeypatch):
+    import logeventminer_capi as module
+    monkeypatch.setattr(module, "_ASYNC_THRESHOLD", 1)
+    original = module._prepare_report
+    threads = []
+    def prepare(report, source):
+        if source:
+            threads.append(threading.current_thread())
+        return original(report, source)
+    monkeypatch.setattr(module, "_prepare_report", prepare)
+    monitor = CAPIMonitor(logging.getLogger("test.capi"))
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"first": [1]})
+    monitor.receive("capi_fleetcarrier", {"second": [2]})
+    finished = tk.BooleanVar(master=root, value=False)
+    def check():
+        if not monitor._pending_reports:
+            finished.set(True)
+        else:
+            root.after(10, check)
+    timeout = root.after(5000, lambda: finished.set(True))
+    check()
+    root.wait_variable(finished)
+    root.after_cancel(timeout)
+    assert not monitor._pending_reports
+    assert threads and all(thread is not threading.main_thread() for thread in threads)
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    output = text.get("1.0", "end")
+    assert output.index('"first"') < output.index('"second"')
+    assert monitor._poll_after is None
+    monitor.close(restore_grab=False)
+    assert monitor._json_worker is None
+
+
+def test_close_cancels_pending_json_and_reopen_has_no_stale_output(root, monkeypatch):
+    import logeventminer_capi as module
+    monkeypatch.setattr(module, "_ASYNC_THRESHOLD", 1)
+    monitor = CAPIMonitor(logging.getLogger("test.capi"))
+    monitor.show(root)
+    monitor.receive("cmdr_data", {"stale": list(range(2000))})
+    monitor.close(restore_grab=False)
+    assert not monitor._pending_reports
+    assert monitor._poll_after is None
+    monitor.show(root)
+    root.update()
+    text = next(child for child in descendants(root) if isinstance(child, tk.Text))
+    assert '"stale"' not in text.get("1.0", "end")
     monitor.close()
